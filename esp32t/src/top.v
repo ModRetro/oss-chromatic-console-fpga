@@ -1,6 +1,12 @@
 // top.v
 
-module top #(parameter ISSIMU=0)
+
+module top #(
+    parameter ISSIMU=0,
+    // USB capture default: 1 = 320x288, 0 = native 160x144.
+    // The host can explicitly select either resolution regardless of this.
+    parameter UVC_DEFAULT_SCALE_2X=1'b1
+)
 (
     output              ADC_SEL,
     output              AUD_BCLK,
@@ -27,7 +33,8 @@ module top #(parameter ISSIMU=0)
     inout               CART_RST,
     output              CART_WR,
     output              CART_DATA_DIR_E,
-
+    output              CART_CTRL_OE, // active-high cartridge shifter enable (new boards)
+    output              CART_PWR_EN,
     input               CART_DET,
     input               CART_AUDIN,
 
@@ -40,7 +47,7 @@ module top #(parameter ISSIMU=0)
     output              SDIO_LS,
     input               POWER_ON_FPGA,
     output              POWER_DOWN_IO,
-    input               VBUS_DET,
+//    input               VBUS_DET,  // unused pin
 
     output reg          ESP32_IO0,
 
@@ -64,12 +71,6 @@ module top #(parameter ISSIMU=0)
     output  reg         FPGA_LED_G,
     output  reg         FPGA_LED_B,
 
-    output  [2:0]       HDMI_D_P,
-    output  [2:0]       HDMI_D_N,
-    output              HDMI_CLK_P,
-    output              HDMI_CLK_N,
-    input               HDMI_SBU1_HPD,
-    output              HDMI_SBU2_CEC,
 
     input               IR_RX,
     output              IR_LED,
@@ -88,9 +89,13 @@ module top #(parameter ISSIMU=0)
     output              LCD_VSYNC,
 
     inout               LINK_CLK,
+    output              LINK_CLK_DIR_LV, // controls data flow in level shifter    
     input               LINK_IN,
     output              LINK_OUT,
-    output              LINK_SD,
+    input               LINK_SD,  // changed from output to input, 
+//     output              LINK_SD,
+    output              LINK_SD_DIR_LV,  // 
+
 
     output              PS_CE_N,
     output              PS_CLK,
@@ -100,7 +105,7 @@ module top #(parameter ISSIMU=0)
     inout               SCL,
     inout               SDA,
 
-    input               USBC_FLIP,
+//    input               USBC_FLIP,  // unused signal
     inout               usb_dxp_io,
     inout               usb_dxn_io,
     input               usb_rxdp_i,
@@ -110,8 +115,39 @@ module top #(parameter ISSIMU=0)
     inout               usb_term_dn_io,
 
     input               VBAT_ADC_P,
-    input               VBAT_ADC_N
+    input               VBAT_ADC_N,
+
+    input               VERSION_DET, // discriminates between versions
+    input               VERSION_DET2,
+    input               DISPLAY_ID,
+    output              CHG_EN_FPGA
 );
+
+
+// ---------------------------------------------------------------
+// 'POWER_ON_FPGA` high when chromatic powered off USB but
+// power switch off.  
+//
+// In this state, need to enable the USB charger if LiPo battery
+// connected
+// ---------------------------------------------------------------
+
+
+    wire [7:0] temperature;
+    wire emulator_was_reset; // signal from emulator core, indicating a reset took place
+    wire appear_off = emulator_was_reset | POWER_ON_FPGA; // turn stuff off , alternatively could set CART_RST = ~POWER_ON_FPGA ...
+
+    // Cartridge power and isolation are sequenced below, independently of
+    // emulator/menu resets and USB activity.
+
+// SD link not actively used, configure so that FPGA side is always an input
+// nothing connected to SD card => open (high impedance)
+// L (1'b0): B to A  
+// H (1'b1): A to B
+//
+// A-side connected to FPGA, B-side connected to upstream components.
+    assign LINK_SD_DIR_LV = 1'b0; 
+////////////// 
 
     assign POWER_DOWN_IO = 1'bZ;
     assign SDIO_LS = 1'd1;
@@ -119,7 +155,7 @@ module top #(parameter ISSIMU=0)
     wire    BIST_failed;
     wire    BIST_finished;
 
-    assign FPGA_LED_EN = 1'd1;
+    assign FPGA_LED_EN = !POWER_ON_FPGA;
 
     wire lock_o;
 
@@ -128,6 +164,7 @@ module top #(parameter ISSIMU=0)
     wire hClk;
     wire gClk;
     wire xClk;
+
 
     Gowin_PLL u_Gowin_PLL(
         .reset(1'd0),//input reset
@@ -140,9 +177,6 @@ module top #(parameter ISSIMU=0)
         .lock(lock_o), //output lock
         .clkin(CLK_FPGA) //input clkin
     );
-
-    reg [13:0] voltageSim = 14'd1500;
-    reg voltageSimDir = 1'b0;
 
     reg [22:0] secondCounter = 'd0;
     reg secondEna;
@@ -173,20 +207,50 @@ module top #(parameter ISSIMU=0)
             secondCounter <= secondCounter + 1'd1;
         end
 
-        if (secondEna) begin
-            if (voltageSimDir) begin
-                voltageSim <= voltageSim + 50;
-                if (voltageSim > 1800) begin
-                  voltageSimDir <= 1'b0;
-                end
+    end
+
+
+// ================================================================================
+// Latch Cart RST. 
+// 
+// Monitor the high-impedance CART_RST signal.  Should stay high ordinarily.  
+// Reset the Gameboy core in emu_system_top, if CART_RST goes low as it could be
+// imply an issue. 
+//
+// If CART_RST deasserts, latch it and maintain an active low reset for 256 clock
+// cycles.  This "latched_cart_rst_n" feeds the gameboy core reset.
+// =================================================================================
+`define ENABLE_CART_RST_MONITOR
+`ifdef ENABLE_CART_RST_MONITOR
+
+//
+//    reg [7:0] rst_counter;
+    reg [3:0] rst_counter;
+    reg       timeout_done;
+    reg [1:0] cart_rst_sync;
+    reg       latched_cart_rst_n;
+    always@(posedge xClk or negedge CART_RST) begin
+        if(!CART_RST) begin
+            timeout_done <= 1'b0;
+            cart_rst_sync <= 2'b00;
+            rst_counter <= 4'h0;
+        end else begin
+            if (rst_counter < 4'hF/*8'hff*/) begin
+                rst_counter <= rst_counter + 1;
             end else begin
-                voltageSim <= voltageSim - 50;
-                if (voltageSim < 950) begin
-                  voltageSimDir <= 1'b1;
-                end
+                timeout_done <= 1'b1;
             end
+            cart_rst_sync <= {cart_rst_sync[0],timeout_done};
         end
     end
+    assign latched_cart_rst_n = cart_rst_sync[1];
+
+
+`else 
+    wire latched_cart_rst_n = 1'b1;
+`endif
+
+//    localparam HALF_SECOND_XCLK_TIMER = 37_500_000;
 
     wire low_battery;
     wire boot_rom_enabled;
@@ -196,34 +260,45 @@ module top #(parameter ISSIMU=0)
     wire LED_White;
     wire [7:0]  pmic_sys_status;
 
-    always@(posedge xClk)
-    begin
-        if (LED_White) begin
-            FPGA_LED_R <= 1'd0;
-            FPGA_LED_B <= 1'd0;
-            FPGA_LED_G <= 1'd0;
-        end else if (LED_Green) begin
-            FPGA_LED_R <= 1'd1;
-            FPGA_LED_B <= 1'd1;
-            FPGA_LED_G <= 1'd0;
-        end else if (LED_Yellow) begin
-            FPGA_LED_R <= 1'd0;
-            FPGA_LED_B <= 1'd1;
-            FPGA_LED_G <= secondCounter[4];
-        end else if (LED_Red) begin
-            FPGA_LED_R <= 1'd0;
-            FPGA_LED_B <= 1'd1;
-            FPGA_LED_G <= 1'd1;
-        end else begin
-            FPGA_LED_R <= 1'd1;
-            FPGA_LED_B <= 1'd1;
-            FPGA_LED_G <= 1'd1;
+
+
+    always@(posedge xClk) begin
+
+        if (~lock_o) begin 
+            FPGA_LED_R <= 1'b1;
+            FPGA_LED_B <= 1'b1;
+            FPGA_LED_G <= 1'b1;  
+        end
+        else begin 
+
+                // normal operations - switch on and/or not connected over USB
+                if (LED_White) begin
+                    FPGA_LED_R <= 1'd0; //1'd0;
+                    FPGA_LED_B <= 1'd0; //1'd0;
+                    FPGA_LED_G <= 1'd0;//1'd0;
+                end else if (LED_Green) begin
+                    FPGA_LED_R <= 1'd1;
+                    FPGA_LED_B <= 1'd1;
+                    FPGA_LED_G <= 1'd0;
+                end else if (LED_Yellow) begin
+                    FPGA_LED_R <= 1'd0;
+                    FPGA_LED_B <= 1'd1;
+                    FPGA_LED_G <= secondCounter[4];
+                end else if (LED_Red) begin
+                    FPGA_LED_R <= 1'd0;
+                    FPGA_LED_B <= 1'd1;
+                    FPGA_LED_G <= 1'd1;
+                end else begin
+                    FPGA_LED_R <= 1'd1;
+                    FPGA_LED_B <= 1'd1;
+                    FPGA_LED_G <= 1'd1;
+                end
+
         end
     end
 
     wire [15:0]       hWrBurstQ;
     wire [15:0]       hWrBurstQ2;
-    wire              hValid;
     wire              hHsync;
     wire              hVsync;
 
@@ -238,14 +313,14 @@ module top #(parameter ISSIMU=0)
     wire [22:0]       hGBAddress;
     wire              hGBWrite;
     wire [15:0]       hGBData;
-    wire              LCD_ENABLE_UVC;
+    wire capture_valid, capture_frame_start, capture_line_end;
 
 
     reg LCD_VSYNC_r1;
     always@(posedge gClk)
         LCD_VSYNC_r1 <= LCD_VSYNC;
 
-    reg memrst = 1'd0;
+    reg memrst = 1'd1;
 
     reg LCD_EN1;
     reg LCD_EN0;
@@ -271,28 +346,29 @@ module top #(parameter ISSIMU=0)
 
     wire [31:0] debug_system;
     wire [15:0] system_control;
-    wire [17:0] LCD_DB_UVC;
+    wire [17:0] capture_pixel;
     wire menuDisabled;
-    wire slideOutActive;
     wire hDrawOSD;
     vid_system_top #(ISSIMU)
     u_vid_system_top(
+        .appear_off (appear_off),
         .gClk(gClk),
         .hClk(hClk),
         .pClk(pClk),
-        .reset(memrst),
+        .reset(memrst ),    
 
         .BTN_MENU(menuDisabled),
-        .slideOutActive(slideOutActive),
 
-        .LCD_DB(LCD_DB),
-        .LCD_ENABLE_UVC(LCD_ENABLE_UVC),
-        .LCD_DB_UVC(LCD_DB_UVC),
+        .LCD_DB(LCD_DB),  
+        .capture_valid(capture_valid),
+        .capture_frame_start(capture_frame_start),
+        .capture_line_end(capture_line_end),
+        .capture_pixel(capture_pixel),
         .LCD_DOTCLK(LCD_DOTCLK),
         .LCD_ENABLE(LCD_ENABLE),
         .LCD_HSYNC(LCD_HSYNC),
         .LCD_EN(LCD_EN),
-        .LCD_RESET(LCD_RESET),
+        .LCD_RESET(LCD_RESET), 
         .LCD_SPI_CSX(LCD_SPI_CSX),
         .LCD_SPI_SCLK(LCD_SPI_SCLK),
         .LCD_SPI_SDA(LCD_SPI_SDA),
@@ -319,25 +395,28 @@ module top #(parameter ISSIMU=0)
         .hGBWrite(hGBWrite),
         .hGBData(hGBData),
 
-        .hValid(hValid),
         .hHsync(hHsync),
         .hVsync(hVsync),
         .hWrBurstQ(hWrBurstQ),
         .hWrBurstQ2(hWrBurstQ2),
 
         .LCD_INIT_DONE(LCD_INIT_DONE),
-        .gb_lcd_clkena(gb_lcd_clkena),
+        .gb_lcd_clkena(gb_lcd_clkena), 
         .gb_lcd_mode(gb_lcd_mode),
-        .gb_lcd_on(gb_lcd_on),
-        .gb_lcd_vsync(gb_lcd_vsync),
+        .gb_lcd_on(gb_lcd_on),   
+        .gb_lcd_vsync(gb_lcd_vsync), 
         .gb_lcd_data(gb_lcd_data)
     );
+
+
 
     wire [15:0] left, right;
     wire [7:0]  volume;
     wire        hHeadphones;
 
-    aud_system_top u_aud_system_top(
+    aud_system_top_8_16 u_aud_system_top(     
+        .VERSION_DET (VERSION_DET),
+        .appear_off (appear_off),
         .gClk(gClk),
         .hClk(hClk),
         .reset_n(lock_o),
@@ -346,7 +425,7 @@ module top #(parameter ISSIMU=0)
 
         .AUD_BCLK(AUD_BCLK),
         .AUD_DIN(AUD_DIN),
-        .AUD_DOUT(),
+        .AUD_DOUT(1'b0), // Codec return audio is unused.
         .AUD_MCLK(AUD_MCLK),
         .AUD_RESET(AUD_RESET),
         .AUD_WCLK(AUD_WCLK),
@@ -354,17 +433,25 @@ module top #(parameter ISSIMU=0)
         .software_mute(system_control[0]),
         .pmic_sys_status(pmic_sys_status),
         .volume(volume),
+        .temperature(temperature),
         .hHeadphones(hHeadphones),
         .SCL(SCL),
-        .SDA(SDA)
-    );
+        .SDA(SDA),
+        .POWER_ON_FPGA (POWER_ON_FPGA)
+//        .use_16_bit (use_16_bit)
+    );    
 
+// =====================================================================
+// Previously, both of these clocked processes used "xClk".
+// Using the higher frequency "fClk" domain removed recovery timing
+// violations without impacting functionality
+// =====================================================================
     reg [17:0] CART_DET_sr;
-    always@(posedge xClk)
+    always@(posedge fClk)
         CART_DET_sr <= {CART_DET_sr[16:0], CART_DET};
 
     // CART_DET = 0 (no cart inserted)
-    always@(posedge xClk or negedge lock_o)
+    always@(posedge fClk or negedge lock_o)
         if(~lock_o)
             memrst <= 1'd1;
         else
@@ -376,8 +463,7 @@ module top #(parameter ISSIMU=0)
         .xClk(xClk),
         .fClk(fClk),
         .hClk(hClk),
-        .reset(memrst),
-
+        .reset (memrst), 
         .QSPI_CLK(QSPI_CLK),
         .QSPI_MOSI(QSPI_MOSI),
         .QSPI_MISO(QSPI_MISO),
@@ -412,10 +498,17 @@ module top #(parameter ISSIMU=0)
     wire lcd_off_overwrite;
 
     wire [8:0] MCU_buttons;
+    
+    //////////////////////////////////////////////// 
+    // apply debounce logic to menu button
+//    wire BTN_MENU_ored = BTN_MENU & ~MCU_buttons[8]; // BTN_MENU is low active
 
-    wire BTN_MENU_ored = BTN_MENU & ~MCU_buttons[8]; // BTN_MENU is low active
 
-
+    wire nBTN_MENU_filtered;
+    wire nBTN_MENU = ~BTN_MENU;
+    button_debouncer debouncer_MENU     (gClk, nBTN_MENU     , nBTN_MENU_filtered     );
+    wire BTN_MENU_filtered = ~nBTN_MENU_filtered & ~MCU_buttons[8];
+    //////////////////////////////////////////////// 
     wire BTN_A_filtered;
     wire BTN_B_filtered;
     wire BTN_DPAD_DOWN_filtered;
@@ -437,20 +530,63 @@ module top #(parameter ISSIMU=0)
     wire [63:0] paletteBGIn;
     wire [63:0] paletteOBJ0In;
     wire [63:0] paletteOBJ1In;
+    wire [2:0]  gbc_color_temp;
     wire gbc_mode;
     wire [63:0] gpd;
 
+
+
+    wire cartridge_ready;
+    wire [15:0] core_cart_a;
+    wire [7:0] core_cart_d_in, core_cart_d_out;
+    wire core_cart_clk, core_cart_cs, core_cart_rd, core_cart_wr;
+    wire core_cart_data_dir_e;
+    reg [1:0] cartridge_reset_sync = 2'b00;
+    always @(posedge hClk or negedge lock_o)
+        if (!lock_o) cartridge_reset_sync <= 2'b00;
+        else cartridge_reset_sync <= {cartridge_reset_sync[0], 1'b1};
+
+    cartridge_interface u_cartridge_interface (
+        .clk(hClk),
+        .reset_n(cartridge_reset_sync[1]),
+        .cartridge_enable(~POWER_ON_FPGA),
+        .version_detect(VERSION_DET),
+        .cartridge_ready(cartridge_ready),
+        .core_a(core_cart_a),
+        .core_clk(core_cart_clk),
+        .core_cs(core_cart_cs),
+        .core_rd(core_cart_rd),
+        .core_wr(core_cart_wr),
+        .core_d_out(core_cart_d_out),
+        .core_d_in(core_cart_d_in),
+        .core_data_dir_e(core_cart_data_dir_e),
+        .CART_A(CART_A),
+        .CART_CLK(CART_CLK),
+        .CART_CS(CART_CS),
+        .CART_RD(CART_RD),
+        .CART_WR(CART_WR),
+        .CART_D(CART_D),
+        .CART_RST(CART_RST),
+        .CART_DATA_DIR_E(CART_DATA_DIR_E),
+        .CART_CTRL_OE(CART_CTRL_OE),
+        .CART_PWR_EN(CART_PWR_EN)
+    );
+
     emu_system_top u_emu_system_top(
+        .o_emulator_reset (emulator_was_reset),
         .hclk(hClk),
         .pclk(pClk),
+        .fclk(fClk),
+        .xclk(xClk), 
         .reset_n(~memrst),//lock_o),
-        .POWER_GOOD(~POWER_ON_FPGA),
+        .POWER_GOOD(cartridge_ready),
 
         .customPaletteEna(paletteBGIn[63]),
         .paletteOff(system_control[12]),
         .paletteBGIn(paletteBGIn),
         .paletteOBJ0In(paletteOBJ0In),
         .paletteOBJ1In(paletteOBJ1In),
+        .gbc_color_temp(gbc_color_temp),
         .gbc_mode(gbc_mode),
         .gpd(gpd),
 
@@ -461,24 +597,28 @@ module top #(parameter ISSIMU=0)
         .BTN_DPAD_LEFT(BTN_DPAD_LEFT_filtered | MCU_buttons[6]),
         .BTN_DPAD_RIGHT(BTN_DPAD_RIGHT_filtered | MCU_buttons[5]),
         .BTN_DPAD_UP(BTN_DPAD_UP_filtered | MCU_buttons[4]),
-        .BTN_MENU(~BTN_MENU_ored),
+
+        .BTN_MENU(~BTN_MENU_filtered), // debounce menu button too
+//         .BTN_MENU(~BTN_MENU_ored),
+
         .BTN_SEL(BTN_SEL_filtered | MCU_buttons[1]),
         .BTN_START(BTN_START_filtered | MCU_buttons[0]),
-        .MENU_CLOSED(menuDisabled & ~slideOutActive),
+        .MENU_CLOSED(menuDisabled),
 
-        .CART_A(CART_A),
-        .CART_CLK(CART_CLK),
-        .CART_CS(CART_CS),
-        .CART_D(CART_D),
-        .CART_RD(CART_RD),
-        .CART_RST(CART_RST),
-        .CART_WR(CART_WR),
-        .CART_DATA_DIR_E(CART_DATA_DIR_E),
+        .CART_A(core_cart_a),
+        .CART_CLK(core_cart_clk),
+        .CART_CS(core_cart_cs),
+        .CART_D_IN(core_cart_d_in),
+        .CART_D_OUT(core_cart_d_out),
+        .CART_RD(core_cart_rd),
+        .CART_WR(core_cart_wr),
+        .CART_DATA_DIR_E(core_cart_data_dir_e),
 
         .IR_RX(IR_RX),
-        .IR_LED(IR_LED),
+        .IR_LED(IR_LED),    
 
         .LINK_CLK(LINK_CLK),
+        .LINK_CLK_DIR_LV (LINK_CLK_DIR_LV), // control direction of clock through core
         .LINK_IN(LINK_IN),
         .LINK_OUT(LINK_OUT),
 
@@ -496,7 +636,9 @@ module top #(parameter ISSIMU=0)
         .gb_lcd_mode(gb_lcd_mode),
         .gb_lcd_on(gb_lcd_on),
         .gb_lcd_vsync(gb_lcd_vsync),
-        .gb_lcd_data(gb_lcd_data)
+        .gb_lcd_data(gb_lcd_data),   
+
+        .latched_cart_rst_n (latched_cart_rst_n)   
     );
 
     reg UART_TXD;
@@ -564,38 +706,6 @@ module top #(parameter ISSIMU=0)
     wire clk24;
     wire [7:0] debugs;
 
-    assign HDMI_D_P[2] = lcd_on_int;
-    assign HDMI_D_N[2] = hDrawOSD;
-    assign HDMI_D_P[1] = lcd_off_overwrite;
-    assign HDMI_D_N[1] = gb_lcd_on;
-    assign HDMI_D_P[0] = gb_lcd_vsync;
-    assign HDMI_D_N[0] = gb_lcd_mode[1];
-    assign HDMI_CLK_P = gb_lcd_clkena;
-    assign HDMI_CLK_N = hGBWrite;
-
-    reg hr1;
-    reg vr1;
-    reg he1;
-    reg [17:0] d1;
-
-    always@(posedge gClk or posedge memrst)
-    begin
-        if(memrst)
-        begin
-            hr1 <= 'd0;
-            vr1 <= 'd0;
-            he1 <= 'd0;
-            d1  <= 'd0;
-        end
-        else
-        begin
-            hr1 <= LCD_HSYNC;
-            vr1 <= LCD_VSYNC;
-            he1 <= LCD_ENABLE_UVC;
-            d1  <= LCD_DB_UVC;
-        end
-    end
-
     reg [23:0] usbinitcnt;
     reg usbrst = 1'd1;
 
@@ -615,25 +725,27 @@ module top #(parameter ISSIMU=0)
             else
                 usbrst <= 1'd0;
 
-    usbuvcuart_top u_usb_top(
+    usbuvcuart_top #(.DEFAULT_SCALE_2X(UVC_DEFAULT_SCALE_2X)) u_usb_top(
         .CLK_24MHz(CLK_24MHz),
-        .ERST(usbrst),
+        .ERST(usbrst | POWER_ON_FPGA),   // hold in reset while switch in off position
         .pClk(PHY_CLKOUT),
         .usblocked(usblocked),
         .hClk(gClk),
 
         .UART_TXD(UART_RXD), // output
         .UART_RXD(UART_TXD), // input
+        .UART_CTS(1'b0), // Active-low CTS: hardware flow control unused.
         .E_UART_DTR(UART_DTR), // used for ESP32_EN
         .E_UART_RTS(UART_RTS), // used for ESP32_IO0 (bootloader select)
 
         .left(left),
         .right(right),
 
-        .hLineValid(hr1),
-        .hEnable(he1),
-        .hFrameValid(vr1),
-        .hData(d1),
+        .video_clk(hClk),
+        .video_valid(capture_valid),
+        .video_frame_start(capture_frame_start),
+        .video_line_end(capture_line_end),
+        .video_pixel(capture_pixel),
         .debugs(debugs),
         .playerNum({4'd0, system_control[7:4]}),
         .usb_dxp_io(usb_dxp_io),
@@ -665,9 +777,24 @@ module top #(parameter ISSIMU=0)
     wire [15:0] uart_rx_data;
     wire        uart_rx_val;
 
-    wire menu_gated = qMenuInit&(CART_DET_sr[6:3]==4'b1111) ? BTN_MENU_ored : 1'b1;
+//////////////////////////////////////////////// 
+// modify based on addition of debounce logic
+//    wire menu_gated = qMenuInit&(CART_DET_sr[6:3]==4'b1111) ? BTN_MENU_ored : 1'b1;
+    wire menu_gated = qMenuInit&(CART_DET_sr[6:3]==4'b1111) ? BTN_MENU_filtered : 1'b1;
+////////////////////////////////////////////////
+
+// --------------------------------------------------------------
+// Enable the USB charger when the Chromatic is powered with LiPo,
+// 
+// however, need to wait for charger to be fully configured (I2C)
+// --------------------------------------------------------------
+    
+   wire powered_by_lipo;
+   assign CHG_EN_FPGA = 1'b1; //powered_by_lipo;
+
 
     system_monitor u_system_monitor(
+        .appear_off (appear_off),
         .clk(gClk),
         .reset(~lock_o),
         .BTN_A(BTN_A_filtered),
@@ -684,7 +811,6 @@ module top #(parameter ISSIMU=0)
         .LCD_INIT_DONE(LCD_INIT_DONE & ~boot_rom_enabled),
         .LCD_PWM(LCD_PWM),
         .hAdcReq_ext(hAdcReq_ext),
-        //.hAdcValue_r1(voltageSim),
         .hAdcValue_r1(hAdcValue_r1),
         .hAdcReady_r1(hAdcReady_r1),
         .ADC_SEL(ADC_SEL),
@@ -692,6 +818,7 @@ module top #(parameter ISSIMU=0)
         .MCU_buttons(MCU_buttons),
         .hVolume(volume[6:0]),
         .pmic_sys_status(pmic_sys_status),
+        .temperature(temperature),
         .hHeadphones(hHeadphones),
         .gSecondEna(secondEna),
         .gHalfSecondEna(halfSecondEna),
@@ -705,13 +832,17 @@ module top #(parameter ISSIMU=0)
         .paletteBGIn(paletteBGIn),
         .paletteOBJ0In(paletteOBJ0In),
         .paletteOBJ1In(paletteOBJ1In),
+        .gbc_color_temp(gbc_color_temp),
         .gbc_mode(gbc_mode),
         .gpd(gpd),
         .uart_rx_data(uart_rx_data[7:0]),
         .uart_rx_val(uart_rx_val),
         .uart_tx_busy(uart_tx_busy),
         .uart_tx_data(uart_tx_data),
-        .uart_tx_val(uart_tx_val)
+        .uart_tx_val(uart_tx_val),
+  
+        .VERSION_DET (VERSION_DET),
+        .POWERED_BY_LIPO (powered_by_lipo)
     );
 
     UART2

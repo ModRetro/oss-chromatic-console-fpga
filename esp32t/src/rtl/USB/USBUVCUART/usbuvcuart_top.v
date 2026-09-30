@@ -8,16 +8,17 @@
 `define UART_CTRL_IFACE  (`UART_BASE_IFACE)
 `define UART_DATA_IFACE  (`UART_BASE_IFACE + 1)
 
-module usbuvcuart_top(
+module usbuvcuart_top #(parameter DEFAULT_SCALE_2X=1'b1)(
     input               CLK_24MHz,
     input               ERST,
     output              pClk,
     output              usblocked,
     input               hClk,
-    input               hLineValid,
-    input               hEnable,
-    input               hFrameValid,
-    input   [17:0]      hData,
+    input               video_clk,
+    input               video_valid,
+    input               video_frame_start,
+    input   [17:0]      video_pixel,
+    input               video_line_end,
 
     input   [7:0]       playerNum,
 
@@ -40,9 +41,7 @@ module usbuvcuart_top(
     inout               usb_term_dn_io
 );
 
-    wire yLineValid;
-    wire yEnable;
-    wire yFrameValid;
+
 
     wire [7:0] PHY_DATAOUT;
     wire       PHY_TXVALID;
@@ -145,9 +144,9 @@ module usbuvcuart_top(
     wire [11:0] endpt0_txlen;
     wire        endpt0_send;
 
-    reg [7:0]   video_txdat;
-    reg [11:0]  video_txdat_len;
-    reg         video_txcork;
+    wire [7:0]  video_txdat;
+    wire [11:0] video_txdat_len;
+    wire        video_txcork;
 
     reg [7:0]   audio_txdat;
     reg [11:0]  audio_txdat_len;
@@ -205,8 +204,7 @@ module usbuvcuart_top(
     assign usb_rxrdy = (endpt_sel == EP_UART) ? uart_rxrdy :
                        (endpt_sel == EP_CTRL) ? 1'b1 : 1'b0;
 
-    /* TODO: txiso_pid_i(iso_pid_data) shall be per endpoint, but so far
-       we need only 1 packet/microframe on each EP */
+    /* Only the video endpoint uses high-bandwidth isochronous PIDs. */
 
     /* signals from Device Controller to EPs*/
     wire video_txact = (endpt_sel == EP_VS) ? usb_txact : 0;
@@ -234,91 +232,8 @@ module usbuvcuart_top(
         .uac_txdat_len(audio_txdat_len),
         .uac_txcork(audio_txcork));
 
-    wire uvc_fifo_afull;
-    wire uvc_fifo_aempty;
-    wire [12:0] uvc_fifo_rnum;
-
-    /* This is for video EP only */
-    reg v_txact_d0;
-    reg v_txact_d1;
-    wire v_txact_rise;
-    wire v_txact_fall;
-    assign v_txact_rise = v_txact_d0&(~v_txact_d1);
-    assign v_txact_fall = v_txact_d1&(~v_txact_d0);
-    always @(posedge pClk) begin
-        if (RESET_IN) begin
-            v_txact_d0 <= 1'b0;
-            v_txact_d1 <= 1'b0;
-        end
-        else begin
-            v_txact_d0 <= video_txact;
-            v_txact_d1 <= v_txact_d0;
-        end
-    end
-
-    /* TODO:
-     * Rest of the code assumes HSSUPPORT is on and one packet per MFRAME
-     */
-    `define HSSUPPORT
-    //`define MFRAME_PACKETS3
-    //`define MFRAME_PACKETS2
-    reg [3:0] iso_pid_data;
-    always @(posedge pClk) begin
-        if(RESET_IN) begin
-            `ifdef HSSUPPORT
-                `ifdef MFRAME_PACKETS3
-                    iso_pid_data <= 4'b0111;//DATA2
-                `elsif MFRAME_PACKETS2
-                    iso_pid_data <= 4'b1011;//DATA1
-                `else
-                    iso_pid_data <= 4'b0011;//DATA1
-                `endif
-            `else
-                iso_pid_data <= 4'b0011;//DATA0
-            `endif
-        end
-        else begin
-            `ifdef HSSUPPORT
-                `ifdef MFRAME_PACKETS3
-                    if (usb_sof) begin
-                        if (uvc_fifo_afull) begin
-                            iso_pid_data <= 4'b0111;//DATA2
-                        end
-                        else if (uvc_fifo_aempty) begin
-                            iso_pid_data <= 4'b0011;//DATA0
-                        end
-                        else begin
-                            iso_pid_data <= 4'b1011;//DATA1
-                        end
-                        //iso_pid_data <= 4'b0111;//DATA2
-                    end
-                    else if (v_txact_fall) begin
-                        iso_pid_data <= (iso_pid_data == 4'b0111) ? 4'b1011 : ((iso_pid_data == 4'b1011) ? 4'b0011 : iso_pid_data);//DATA2(0111) -> DATA1(1011) -> DATA0(0011)
-                    end
-                `elsif MFRAME_PACKETS2
-                    if (usb_sof) begin
-                        if (uvc_fifo_afull) begin
-                            iso_pid_data <= 4'b0111;//DATA2
-                        end
-                        else if (uvc_fifo_aempty) begin
-                            iso_pid_data <= 4'b0011;//DATA0
-                        end
-                        else begin
-                            iso_pid_data <= 4'b1011;//DATA1
-                        end
-                        iso_pid_data <= 4'b0111;//DATA2
-                    end
-                    else if (v_txact_fall)) begin
-                        iso_pid_data <= (iso_pid_data == 4'b1011) ? 4'b0011 : iso_pid_data;//DATA1(1011) -> DATA0(0011)
-                    end
-                `else
-                    iso_pid_data <= 4'b0011;//DATA0
-                `endif
-            `else
-                iso_pid_data <= 4'b0011;//DATA0
-            `endif
-        end
-    end
+    wire [3:0] video_pid;
+    wire [3:0] iso_pid_data = endpt_sel == EP_VS ? video_pid : 4'b0011;
 
     /* Handle Set Interface for sub-blocks */
     wire [7:0] interface_alter_i;
@@ -339,7 +254,7 @@ module usbuvcuart_top(
     );
 
     interface_alt_select uvc_interface(
-        .RESET_IN(RESET_IN),
+        .RESET_IN(RESET_IN | usb_busreset),
         .pClk(pClk),
         .interface_update(interface_update & (interface_sel == `UVC_VS_INTERFACE)),
         .interface_alter_i(interface_alter_o),
@@ -435,6 +350,7 @@ module usbuvcuart_top(
     #(
 
              .VENDORID    (16'h374E)
+            ,.DEFAULT_SCALE_2X(DEFAULT_SCALE_2X)
             ,.PRODUCTID   (16'h013f)
             ,.VERSIONBCD  (16'h0200)
             ,.HSSUPPORT   (1)
@@ -592,39 +508,26 @@ module usbuvcuart_top(
         .s_parity1_type(s_parity1_type),
         .s_data1_bits(s_data1_bits));
 
-    ctrl_uvc uvc_if_ctrl(
-        .RESET_IN(RESET_IN),
-        .pClk(pClk),
+    wire committed_scale_2x;
+    uvc_control #(.DEFAULT_SCALE_2X(DEFAULT_SCALE_2X)) uvc_if_ctrl(
+        .reset(RESET_IN | usb_busreset),
+        .clk(pClk),
         .header_ready(header_ready),
-        .bmRequestType(bmRequestType),
-        .bRequest(bRequest),
-        .wValue(wValue),
-        .wIndex(wIndex),
-        .wLength(wLength),
-        .cdata_ofs(cdata_ofs),
-        .usb_rxdat(usb_rxdat),
-        .usb_rxact(usb_rxact),
-        .usb_rxval(usb_rxval),
-        .usb_txpop(usb_txpop),
-        .usb_txval(cuvc_txval),
-        .usb_txdat_len(cuvc_txdat_len),
-        .usb_txdat(cuvc_txdat),
-        .bmHint(),
-        .bFormatIndex(),
-        .bFrameIndex(),
-        .dwFrameInterval(),
-        .wKeyFrameRate(),
-        .wPFrameRate(),
-        .wCompQuality(),
-        .wCompWindowSize(),
-        .wDelay(),
-        .dwMaxVideoFrameSize(),
-        .dwMaxPayloadTransferSize(),
-        .dwClockFrequency(),
-        .bmFramingInfo(),
-        .bPreferedVersion(),
-        .bMinVersion(),
-        .bMaxVersion());
+        .request_type(bmRequestType),
+        .request(bRequest),
+        .value(wValue),
+        .index(wIndex),
+        .length(wLength),
+        .offset(cdata_ofs),
+        .rxdata(usb_rxdat),
+        .rxact(usb_rxact),
+        .rxvalid(usb_rxval),
+        .txpop(usb_txpop),
+        .txvalid(cuvc_txval),
+        .txlength(cuvc_txdat_len),
+        .txdata(cuvc_txdat),
+        .scale_2x(committed_scale_2x)
+    );
 
     ctrl_uac uac_if_ctrl(
         .RESET_IN(RESET_IN),
@@ -644,313 +547,69 @@ module usbuvcuart_top(
         .usb_txdat_len(cuac_txdat_len),
         .usb_txdat(cuac_txdat));
 
-    reg [3:0] pState;
-
-    localparam IDLE = 4'd1; //Wait for usb_sof
-    localparam UNCORK = 4'd2; //Ready for TX (waiting txact)
-    localparam TXACTIVE = 4'd4; //TX in progress (waiting ~txact)
-
-    /* pLastPacket indicates that last data of the frame is in the buffer */
-    reg pLastPacket;
-    /* pLastReadActive indicates that last data of the frame is sent to USB */
-    reg pLastReadActive;
-    reg pReadActive;
-
-    parameter PACKET_SIZE       = `PACKET_SIZE;
-    localparam HEADER_SIZE      = 11'd12;
-    localparam PACKET_PAYLOAD   = PACKET_SIZE - HEADER_SIZE;
-    parameter WIDTH             = `WIDTH;
-    parameter HEIGHT            = `HEIGHT;
-
-    always @(posedge pClk) begin
-        if(RESET_IN)
-            pState <= IDLE;
-        else if (usb_sof) begin
-            /* WARNING ! Currently uvc_fifo_afull triggers at 1012 bytes,
-               while we only need 1011 inside to fill full packet (one
-               extra byte is always kept at the fifo output). */
-            if (uvc_fifo_afull) begin
-                video_txdat_len <= PACKET_SIZE;
-                pLastReadActive <= 1'd0;
-                pReadActive <= 1;
-            end else if (pLastPacket) begin
-                video_txdat_len <= uvc_fifo_rnum[11:0] + HEADER_SIZE;
-                pLastReadActive <= 1'd1;
-                pReadActive <= 1;
-            end else begin
-                video_txdat_len <= HEADER_SIZE;
-                pLastReadActive <= 1'd0;
-                pReadActive <= 0;
-            end
-            video_txcork <= 1'b0;
-            pState <= UNCORK;
-        end else if (video_txact && (pState == UNCORK)) begin
-            pState <= TXACTIVE;
-        end else if (~video_txact && (pState == TXACTIVE)) begin
-            pState <= IDLE;
-        end
-    end
-
-    reg [10:0] pktByteCount;
-    always@(posedge pClk)
-        if(pState != TXACTIVE)
-            pktByteCount <= 'd0;
-        else if (video_txpop)
-            pktByteCount <= pktByteCount + 1'd1;
-
-    reg [31:0] pts_counter;
-    always @(posedge pClk)
-        if (RESET_IN)
-            pts_counter = 32'd0;
-        else
-            pts_counter = pts_counter + 32'd1;
-
-    reg [10:0] sofCounts;
-    reg [31:0] pts_reg;
-    reg [7:0] pFrame;
-    wire EOF = 1'd0;
-
-    always @(posedge pClk)
-        if(RESET_IN) begin
-            pFrame <= 8'h8C;
-            pts_reg <= 32'd0;
-        end else if (v_txact_fall && pLastReadActive) begin
-            pFrame <= {pFrame[7:1], pFrame[0]^1'b1};
-            pts_reg <= pts_counter;
-        end
-
-    wire uvc_fifo_rden = video_txpop
-                && (((pktByteCount >= (HEADER_SIZE - 1))
-                  && (pktByteCount < (PACKET_SIZE - 1)) && pReadActive));
-
-    /* ================= hClk ==================
-       Get incoming YUV data, put it into FIFO */
-
-    /* not really used */
-    reg yLineValid_r1;
-    always@(posedge hClk)
-        yLineValid_r1 <= yLineValid;
-
-    reg yFrameValid_r1;
-    always@(posedge hClk)
-        yFrameValid_r1 <= yFrameValid;
-    wire h_sof = yFrameValid & ~yFrameValid_r1;
-
-    reg [9:0] hCountX;
-    reg [9:0] hCountY;
-
-    reg hImage_eof;
-
-    reg [2:0] hCount3;
-
-    always@(posedge hClk)
-        if (~yEnable) begin
-            hCount3 <= 3'b001;
-        end else begin
-            hCount3 <= {hCount3[1:0], hCount3[2]};
-        end
-
-    wire vnu = hCountX[0];
-    /*
-        For each pair of pixels:
-        P1   P1   P1   P2   P2   P2   pixel data available
-        Y1   MU   MV   Us   Y2   Vs   write this part
-        001  010  100  001  010  100  hCount3
-        0    0    0    1    1    1    vnu
-
-    */
-
-    wire can_write = (hCountX < WIDTH) && yEnable;
-    /* write Vs */
-    wire hEnable2 = hCount3[2] && vnu && can_write;
-    /* write Us */
-    wire hEnable1 = hCount3[0] && vnu && can_write;
-    /* write Y */
-    wire hEnable0 = ((hCount3[0] && !vnu) || (hCount3[1] && vnu))
-                && can_write;
-    wire store_u = hCount3[1] && !vnu && can_write;
-    wire store_v = hCount3[2] && !vnu && can_write;
-
-    reg yEnable_r1;
-    always@(posedge hClk)
-        yEnable_r1  <= yEnable;
-
-    always@(posedge hClk)
-        if (h_sof) begin
-            hCountX <= 'd0;
-            hCountY <= 'd0;
-            hImage_eof <= 'd0;
-        end else begin
-            hImage_eof <= 'd0;
-            if (yEnable) begin
-                if(hCount3[2])
-                    hCountX <= hCountX + 1'd1;
-            end else begin
-                if (yEnable_r1) begin
-                    hCountY <= hCountY + 1'd1;
-                    if(hCountY == (HEIGHT - 1))
-                        hImage_eof <= 1'd1;
-                    hCountX <= 'd0;
-                end
-            end
-        end
-
-    wire [7:0] pRam_q;
-
-    /* Input data has BGR (B in the high bits) */
-    wire [7:0] B = {hData[17:12], 2'd0};
-    wire [7:0] G = {hData[11:6], 2'd0};
-    wire [7:0] R = {hData[5:0], 2'd0};
-    wire [7:0] Y; // 8-bit output for Luma component
-    wire [7:0] Cb; // 8-bit output for Chroma Blue component
-    wire [7:0] Cr; // 8-bit output for Chroma Red component
-
-    rgb_to_ycbcr_pipeline convert(
-        .rst(RESET_IN),
-        .hClk(hClk),
-        .hLineValid(hLineValid),
-        .hEnable(hEnable),
-        .hFrameValid(hFrameValid),
-        .R(R),
-        .G(G),
-        .B(B),
-        .yLineValid(yLineValid),
-        .yEnable(yEnable),
-        .yFrameValid(yFrameValid),
-        .Y(Y),
-        .Cb(Cb),
-        .Cr(Cr)
+    wire capture_reset = RESET_IN | usb_busreset;
+    wire capture_frame_start, capture_scale_2x, capture_pixel_valid;
+    wire [17:0] capture_pixel;
+    wire capture_byte_valid;
+    wire [7:0] capture_byte;
+    wire capture_overflow;
+    wire stream_enabled = usb_highspeed && !usb_suspend &&
+                          (uvc_iface_alter == 1 || uvc_iface_alter == 2);
+    uvc_capture capture (
+        .reset(capture_reset),
+        .source_clk(video_clk),
+        .source_frame_start(video_frame_start),
+        .source_line_end(video_line_end),
+        .source_valid(video_valid),
+        .source_pixel(video_pixel),
+        .usb_clk(pClk),
+        .scale_2x(committed_scale_2x),
+        .frame_start(capture_frame_start),
+        .frame_scale_2x(capture_scale_2x),
+        .pixel_valid(capture_pixel_valid),
+        .pixel(capture_pixel)
+    );
+    uvc_rgb_to_yuy2 capture_color (
+        .clk(pClk),
+        .reset(capture_reset | capture_frame_start),
+        .pixel_valid(capture_pixel_valid),
+        .pixel(capture_pixel),
+        .byte_valid(capture_byte_valid),
+        .byte_data(capture_byte)
+    );
+    uvc_packetizer capture_packets (
+        .clk(pClk),
+        .reset(capture_reset),
+        .enabled(stream_enabled),
+        .high_bandwidth(uvc_iface_alter == 2),
+        .frame_start(capture_frame_start),
+        .frame_bytes(capture_scale_2x ? 18'd184320 : 18'd46080),
+        .byte_valid(capture_byte_valid),
+        .byte_data(capture_byte),
+        .sof(usb_sof),
+        .txact(video_txact),
+        .txpop(video_txpop),
+        .txdata(video_txdat),
+        .txlength(video_txdat_len),
+        .cork(video_txcork),
+        .pid(video_pid),
+        .overflow(capture_overflow)
     );
 
-    reg [7:0] Mu;
-    reg [7:0] Mv;
-
-    /* Which component to write in current pixel: Y, U(Cb) or V(Cr) */
-    wire [7:0] fram_d = hEnable0 ? Y :
-                        hEnable1 ? (Mu + Cb) >> 1 :
-                        hEnable2 ? (Mv + Cr) >> 1 : 0;
-    always@(posedge hClk)
-        if(store_u)
-            Mu <= Cb;
-
-    always@(posedge hClk)
-        if(store_v)
-            Mv <= Cr;
-
-    wire Empty;
-    wire Full;
-    fifo_video uvc_fifo(
-            .Data(fram_d), //input [7:0] Data
-            .Reset(RESET_IN | h_sof), //input Reset
-            .WrClk(hClk), //input WrClk
-            .RdClk(pClk), //input RdClk
-            .WrEn(hEnable2 | hEnable1 | hEnable0), //input WrEn
-            .RdEn(uvc_fifo_rden), //input RdEn
-            .Rnum(uvc_fifo_rnum), //output [12:0] Rnum
-            .Almost_Empty(uvc_fifo_aempty), //output Almost_Empty
-            .Almost_Full(uvc_fifo_afull), //output Almost_Full
-            .AlmostFullTh(PACKET_SIZE - HEADER_SIZE), //input [11:0] AlmostFullTh
-            .Q(pRam_q), //output [7:0] Q
-            .Empty(Empty), //output Empty
-            .Full(Full) //output Full
-            );
-
-    /* Pull FrameValid to pClk */
-    reg [4:0] pFrameValid_sr;
-    always@(posedge pClk)
-        pFrameValid_sr <= {pFrameValid_sr[3:0], yFrameValid};
-
-    wire pImage_sof = pFrameValid_sr[4:2] == 3'b001;
-
-    reg [3:0] pImage_eof_sr;
-    wire pImage_eof = pImage_eof_sr[3:2] == 2'b01;
-    always@(posedge pClk)
-        pImage_eof_sr <= {pImage_eof_sr[2:0], hImage_eof};
-
-    /* ================= hClk end ================== */
-
-
-    always @(posedge pClk) begin
-        if(usb_sof)
-            video_txdat <= HEADER_SIZE; // Header length
-        else if (video_txpop)
-        case (pktByteCount)
-            10'd0: begin
-                if (pLastReadActive)
-                    video_txdat <= pFrame | 8'h02;
-                else
-                    video_txdat <= pFrame;
-            end
-            10'd1 : video_txdat <= pts_reg[7:0];
-            10'd2 : video_txdat <= pts_reg[15:8];
-            10'd3 : video_txdat <= pts_reg[23:16];
-            10'd4 : video_txdat <= pts_reg[31:24];
-            10'd5 : video_txdat <= pts_reg[7:0];
-            10'd6 : video_txdat <= pts_reg[15:8];
-            10'd7 : video_txdat <= pts_reg[23:16];
-            10'd8 : video_txdat <= pts_reg[31:24];
-            10'd9 : video_txdat <= sofCounts[7:0];
-            10'd10 : video_txdat <= {5'd0,sofCounts[10:8]};
-            default : begin
-                if (pktByteCount >= video_txdat_len - 1)
-                    video_txdat <= HEADER_SIZE;
-                else
-                    video_txdat <= pRam_q;
-            end
-        endcase
-    end
-
-    reg sof_d0;
-    reg sof_d1;
+    // Retain the existing audio SOF edge detector in the USB domain.
+    reg sof_d0, sof_d1;
     always @(posedge pClk) begin
         if (RESET_IN) begin
-            sof_d0 <= 1'b0;
-            sof_d1 <= 1'b0;
-        end
-        else begin
+            sof_d0 <= 0;
+            sof_d1 <= 0;
+        end else begin
             sof_d0 <= usb_sof;
             sof_d1 <= sof_d0;
         end
     end
-    assign sof_rise = (sof_d0)&(~sof_d1);
-
-    reg [10:0] sofCounts_reg;
-    reg [3:0] sof_1ms;
-    always @(posedge pClk) begin
-        if (RESET_IN) begin
-            sofCounts <= 11'd0;
-            sof_1ms <= 4'd0;
-        end else begin
-            if (sof_rise) begin
-                if (sof_1ms >= 4'd7) begin
-                    sof_1ms <= 4'd0;
-                    sofCounts <= sofCounts + 11'd1;
-                end else begin
-                    sof_1ms <= sof_1ms + 4'd1;
-                end
-            end
-        end
-    end
-
-    always @(posedge pClk) begin
-        if (pImage_eof)
-            pLastPacket <= 1'd1;
-        else if (!usb_sof && pLastReadActive) begin
-            pLastPacket <= 1'd0;
-        end
-    end
-
-    assign debugs = {
-        pLastReadActive,
-        hFrameValid,
-        hEnable,
-        pImage_sof,
-        uvc_fifo_rden,
-        pState==TXACTIVE ? 1'b1 : 1'b0,
-        usb_sof,
-        pLastPacket
-    };
-
+    assign sof_rise = sof_d0 & ~sof_d1;
+    assign debugs = {capture_overflow, stream_enabled, capture_scale_2x,
+        capture_frame_start, capture_byte_valid, video_txact, usb_sof, video_txpop};
     //==============================================================
     //======UART
     wire [15:0] uart_tx_data    ;
@@ -975,7 +634,7 @@ module usbuvcuart_top(
         ,.UART_TXD   (UART_TXD            )//output
         ,.UART_RXD   (UART_RXD            )//input
         ,.UART_RTS   (                    )// when UART_RTS = 0, UART This Device Ready to receive.
-        ,.UART_CTS   (1'd0                )// when UART_CTS = 0, UART Opposite Device Ready to receive.
+        ,.UART_CTS   (UART_CTS            )// when UART_CTS = 0, UART Opposite Device Ready to receive.
         ,.BAUD_RATE  (uart_dte_rate       )
         ,.PARITY_BIT (uart_parity_type    )
         ,.STOP_BIT   (uart_char_format    )
@@ -990,7 +649,8 @@ module usbuvcuart_top(
     //==============================================================
     //======FIFO
 
-    usb_fifo usb_fifo
+    // Serial endpoint 3 uses pClk for USB, UART TX and UART RX.
+    usb_fifo #(.SINGLE_CLOCK_ENDPOINTS(16'h0008)) usb_fifo
     (
          .i_clk         (pClk   )//clock
         ,.i_reset       (usb_busreset | RESET_IN)//reset
@@ -1057,43 +717,6 @@ module interface_alt_select(
             interface_alt_sel <= interface_alter_i;
         end
     end
-endmodule
-
-module rgb_to_ycbcr_pipeline(
-    input rst,
-    input hClk,
-    input hLineValid,
-    input hEnable,
-    input hFrameValid,
-    input [7:0] R, // 5-bit input for Red component
-    input [7:0] G, // 5-bit input for Green component
-    input [7:0] B, // 5-bit input for Blue component
-    output yLineValid,
-    output yEnable,
-    output yFrameValid,
-    output [7:0] Y, // 8-bit output for Luma component
-    output [7:0] Cb, // 8-bit output for Chroma Blue component
-    output [7:0] Cr // 8-bit output for Chroma Red component
-);
-
-    /* keep synchronisation signals in sync with data */
-    delay hs(rst, hClk, hLineValid, yLineValid);
-    delay vs(rst, hClk, hFrameValid, yFrameValid);
-
-    /* Delays data and data valid for 6 clk */
-    Color_Space_Convertor_Top rgb2yuv(
-        .I_rst_n(!rst), //input I_rst_n
-        .I_clk(hClk), //input I_clk
-        .I_din0(R), //input [7:0] I_din0
-        .I_din1(G), //input [7:0] I_din1
-        .I_din2(B), //input [7:0] I_din2
-        .I_dinvalid(hEnable), //input I_dinvalid
-        .O_dout0(Y), //output [7:0] O_dout0
-        .O_dout1(Cb), //output [7:0] O_dout1
-        .O_dout2(Cr), //output [7:0] O_dout2
-        .O_doutvalid(yEnable) //output O_doutvalid
-        );
-
 endmodule
 
 module ctrl_uart(
@@ -1168,122 +791,6 @@ module ctrl_uart(
                             usb_txdat_len <= wLength[11:0];
                             usb_txdat <= s_dte1_rate[7:0];
                         end
-                    end
-                end
-            end
-        end
-endmodule
-
-module ctrl_uvc(
-    input RESET_IN,
-    input pClk,
-    input header_ready,
-    input [ 7:0] bmRequestType,
-    input [ 7:0] bRequest,
-    input [15:0] wValue,
-    input [15:0] wIndex,
-    input [15:0] wLength,
-    input [15:0] cdata_ofs,
-    input [ 7:0] usb_rxdat,
-    input usb_rxact,
-    input usb_rxval,
-    input usb_txpop,
-    output reg  usb_txval,
-    output reg  [11:0] usb_txdat_len,
-    output reg  [ 7:0] usb_txdat,
-    output reg  [15:0] bmHint,
-    output reg  [ 7:0] bFormatIndex,
-    output reg  [ 7:0] bFrameIndex,
-    output reg  [31:0] dwFrameInterval,
-    output reg  [15:0] wKeyFrameRate,
-    output reg  [15:0] wPFrameRate,
-    output reg  [15:0] wCompQuality,
-    output reg  [15:0] wCompWindowSize,
-    output reg  [15:0] wDelay,
-    output reg  [31:0] dwMaxVideoFrameSize,
-    output reg  [31:0] dwMaxPayloadTransferSize,
-    output reg  [31:0] dwClockFrequency,
-    output reg  [ 7:0] bmFramingInfo,
-    output reg  [ 7:0] bPreferedVersion,
-    output reg  [ 7:0] bMinVersion,
-    output reg  [ 7:0] bMaxVersion
-);
-
-    always @(posedge pClk)
-        if (RESET_IN) begin
-            usb_txval <= 1'd0;
-            bmHint                   <= 0;
-            bFormatIndex             <= 8'h01;
-            bFrameIndex              <= 8'h01;
-            dwFrameInterval          <= `FRAME_INTERVAL;
-            wKeyFrameRate            <= 0;
-            wPFrameRate              <= 0;
-            wCompQuality             <= 0;
-            wCompWindowSize          <= 0;
-            wDelay                   <= 0;
-            dwMaxVideoFrameSize      <= `MAX_FRAME_SIZE;
-            dwMaxPayloadTransferSize <= `PAYLOAD_SIZE;
-            dwClockFrequency         <= 60000000;
-            bmFramingInfo            <= 0;
-            bPreferedVersion         <= 0;
-            bMinVersion              <= 0;
-            bMaxVersion              <= 0;
-        end else if ((header_ready) &&
-                    (wIndex == `UVC_VS_INTERFACE)) begin
-            /* Ignore set requests */
-            if (bmRequestType == 8'hA1) begin /* Get Resquests */
-                /* wLength == 16'd34
-                 * Accept any length > 0, either truncate or pad with zeroes */
-                if ((wLength != 0) && (wValue[15:8] == `VS_PROBE_CONTROL)
-                            &&((bRequest == `GET_CUR)
-                            || (bRequest == `GET_DEF)
-                            || (bRequest == `GET_MIN)
-                            || (bRequest == `GET_MAX))) begin
-                    if (usb_txpop) begin
-                        case (cdata_ofs)
-                        16'd0: usb_txdat <= bmHint[15:8];
-                        16'd1: usb_txdat <= bFormatIndex[7:0];
-                        16'd2: usb_txdat <= bFrameIndex[7:0];
-                        16'd3: usb_txdat <= dwFrameInterval[7:0];
-                        16'd4: usb_txdat <= dwFrameInterval[15:8];
-                        16'd5: usb_txdat <= dwFrameInterval[23:16];
-                        16'd6: usb_txdat <= dwFrameInterval[31:24];
-                        16'd7: usb_txdat <= wKeyFrameRate[7:0];
-                        16'd8: usb_txdat <= wKeyFrameRate[15:8];
-                        16'd9: usb_txdat <= wPFrameRate[7:0];
-                        16'd10: usb_txdat <= wPFrameRate[15:8];
-                        16'd11: usb_txdat <= wCompQuality[7:0];
-                        16'd12: usb_txdat <= wCompQuality[15:8];
-                        16'd13: usb_txdat <= wCompWindowSize[7:0];
-                        16'd14: usb_txdat <= wCompWindowSize[15:8];
-                        16'd15: usb_txdat <= wDelay[7:0];
-                        16'd16: usb_txdat <= wDelay[15:8];
-                        16'd17: usb_txdat <= dwMaxVideoFrameSize[7:0];
-                        16'd18: usb_txdat <= dwMaxVideoFrameSize[15:8];
-                        16'd19: usb_txdat <= dwMaxVideoFrameSize[23:16];
-                        16'd20: usb_txdat <= dwMaxVideoFrameSize[31:24];
-                        16'd21: usb_txdat <= dwMaxPayloadTransferSize[7:0];
-                        16'd22: usb_txdat <= dwMaxPayloadTransferSize[15:8];
-                        16'd23: usb_txdat <= dwMaxPayloadTransferSize[23:16];
-                        16'd24: usb_txdat <= dwMaxPayloadTransferSize[31:24];
-                        16'd25: usb_txdat <= dwClockFrequency[7:0];
-                        16'd26: usb_txdat <= dwClockFrequency[15:8];
-                        16'd27: usb_txdat <= dwClockFrequency[23:16];
-                        16'd28: usb_txdat <= dwClockFrequency[31:24];
-                        16'd29: usb_txdat <= bmFramingInfo[7:0];
-                        16'd30: usb_txdat <= bPreferedVersion[7:0];
-                        16'd31: usb_txdat <= bMinVersion[7:0];
-                        16'd32: usb_txdat <=  bMaxVersion[7:0];
-                        default: usb_txdat <= 0;
-                        endcase
-                        if ((usb_txdat_len - 16'd1) == cdata_ofs)
-                            usb_txval <= 1'd0;
-                    end else if (cdata_ofs == 16'd0) begin
-                        /* initial setup */
-                        usb_txval <= 1'd1;
-                        usb_txdat_len <= wLength < 16'd34
-                                            ? wLength[11:0] : 16'd34;
-                        usb_txdat <= bmHint[7:0];
                     end
                 end
             end

@@ -34,6 +34,7 @@ module video (
    input [63:0] paletteBGIn,
    input [63:0] paletteOBJ0In,
    input [63:0] paletteOBJ1In,
+   input [2:0]  gbc_color_temp,
    output [63:0] gpd_out,
 
 	// cpu register adn oam interface
@@ -196,7 +197,7 @@ reg [5:0] bgpi; //Bit 0-5   Index (00-3F)
 reg bgpi_ai;    //Bit 7     Auto Increment  (0=Disabled, 1=Increment after Writing)
 
 //FF69 - BCPD/BGPD - Background Palette Data
-reg[7:0] bgpd [63:0]; //64 bytes
+reg[7:0] bgpd [63:0] /* synthesis syn_ramstyle = "distributed_ram" */; //64 bytes
 wire [7:0] bug1 = bgpd[0];
 
 //FF6A - OCPS/OBPI - Sprite Palette Index
@@ -204,7 +205,7 @@ reg [5:0] obpi; //Bit 0-5   Index (00-3F)
 reg obpi_ai;    //Bit 7     Auto Increment  (0=Disabled, 1=Increment after Writing)
 
 //FF6B - OCPD/OBPD - Sprite Palette Data
-reg[7:0] obpd [63:0]; //64 bytes
+reg[7:0] obpd [63:0] /* synthesis syn_ramstyle = "distributed_ram" */; //64 bytes
 wire [7:0] bug2 = obpd[0];
 
 // Combined game palette data for games' default palette detection
@@ -1120,6 +1121,50 @@ wire [14:0] gbc_paletteSprite = isGBC ? {obpd[sprite_palette_index+1][6:0], obpd
 wire [14:0] sprite_pix = (customPaletteEna && ~isGBC_mode) ? {paletteCustomOBJ[sprite_palette_index+1][6:0], paletteCustomOBJ[sprite_palette_index]} : // custom
                                                               gbc_paletteSprite;
 
+wire [14:0] lcd_rgb_raw = (sprite_pixel_visible) ? sprite_pix : pix_rgb_data;
+
+function [4:0] sat_add5;
+	input [4:0] val;
+	input [2:0] delta;
+	reg [5:0] sum;
+	begin
+		sum = {1'b0, val} + {3'b0, delta};
+		sat_add5 = sum[5] ? 5'd31 : sum[4:0];
+	end
+endfunction
+
+function [4:0] sat_sub5;
+	input [4:0] val;
+	input [2:0] delta;
+	begin
+		sat_sub5 = (val < {2'b0, delta}) ? 5'd0 : (val - {2'b0, delta});
+	end
+endfunction
+
+wire apply_color_temp = isGBC_mode;
+wire [4:0] rgb_r = lcd_rgb_raw[4:0];
+wire [4:0] rgb_g = lcd_rgb_raw[9:5];
+wire [4:0] rgb_b = lcd_rgb_raw[14:10];
+
+wire [2:0] color_temp_level = (gbc_color_temp > 3'd5) ? 3'd5 : gbc_color_temp;
+
+// Approximate luminance bucket without a 3-channel adder to reduce routing pressure.
+wire bright_hi  = rgb_r[4] & rgb_g[4] & rgb_b[4];
+wire bright_mid = (rgb_r[4] & rgb_g[4]) | (rgb_r[4] & rgb_b[4]) | (rgb_g[4] & rgb_b[4]);
+
+wire [2:0] gated_delta =
+	bright_hi  ? color_temp_level :
+	bright_mid ? {1'b0, color_temp_level[2:1]} :
+				 3'd0;
+
+wire [2:0] green_delta = {1'b0, gated_delta[2:1]};
+
+wire [4:0] red_temp   = sat_add5(rgb_r, gated_delta);
+wire [4:0] green_temp = sat_add5(rgb_g, green_delta);
+wire [4:0] blue_temp  = sat_sub5(rgb_b, gated_delta);
+
+wire [14:0] lcd_rgb_temp = apply_color_temp ? {blue_temp, green_temp, red_temp} : lcd_rgb_raw;
+
 assign lcd_clk = mode3 && ~skip_en && ~sprite_fetch_hold && ~bg_shift_empty && (pcnt >= 8);
 
 reg [14:0] lcd_data_out;
@@ -1129,7 +1174,7 @@ always @(posedge clk) begin
 	if (ce) begin
 		lcd_clk_out <= lcd_clk;
 		if (lcd_clk) begin
-			lcd_data_out <= (sprite_pixel_visible) ? sprite_pix : pix_rgb_data;
+			lcd_data_out <= lcd_rgb_temp;
 			lcd_data_gb_out <= (sprite_pixel_visible) ? obp_data : bgp_data;
 		end
 

@@ -28,6 +28,7 @@ SOFTWARE.
 `include "uart_defs.v"
 
 module usb_desc #(
+        parameter DEFAULT_SCALE_2X = 1'b1,
         // Vendor ID to report in device descriptor.
         parameter VENDORID = 16'h0403,
         // Product ID to report in device descriptor.
@@ -92,7 +93,7 @@ module usb_desc #(
     localparam  DESC_QUAL_ADDR        = 20;
     localparam  DESC_QUAL_LEN         = 10;
     localparam  DESC_FSCFG_ADDR       = 32;
-    localparam  DESC_UAC_ADDR = DESC_FSCFG_ADDR + 173 + 6 + 1;
+    localparam  DESC_UAC_ADDR = DESC_FSCFG_ADDR + 226;
     localparam  DESC_UAC_LEN = 110 + 7 + 1;
     localparam  DESC_CDCIF_ADDR       = DESC_UAC_ADDR + DESC_UAC_LEN;
 
@@ -130,7 +131,7 @@ module usb_desc #(
 
     localparam  DESC_CDCIF_LEN        = CDC_IAD_LEN + CDC_CTRL_IF_LEN + CDC_HEADER_LEN + CDC_UNION_LEN + CDC_CALL_MGMT_LEN + CDC_ACM_LEN + CDC_NOTIFY_EP_LEN + CDC_CLASS_DATA_LEN + CDC_DATA_IN_EP_LEN + CDC_DATA_OUT_EP_LEN;
     localparam DESC_MSOS_LEN = 0;
-    localparam  DESC_FSCFG_LEN        = DESC_UAC_LEN + 180 + DESC_CDCIF_LEN + DESC_MSOS_LEN;
+    localparam  DESC_FSCFG_LEN        = DESC_UAC_LEN + 226 + DESC_CDCIF_LEN + DESC_MSOS_LEN;
     localparam  DESC_HSCFG_ADDR       = DESC_FSCFG_ADDR;
     localparam  DESC_HSCFG_LEN        = DESC_FSCFG_LEN;
     localparam  DESC_OSCFG_ADDR       = DESC_HSCFG_ADDR + DESC_HSCFG_LEN;
@@ -319,7 +320,7 @@ module usb_desc #(
         descrom[DESC_FSCFG_ADDR + 87 + 1] <= `USB_DESCTYPE_CS_INTERFACE;// 1 bDescriptorType - Class-specific Interface
         descrom[DESC_FSCFG_ADDR + 87 + 2] <= `USB_VS_INPUT_HEADER;// 2 bDescriptorSubtype - INPUT HEADER
         descrom[DESC_FSCFG_ADDR + 87 + 3] <= 8'h01;// 3 bNumFormats - One format supported
-        descrom[DESC_FSCFG_ADDR + 87 + 4] <= 8'h4d;// 4 wTotalLength - Size of class-specific VS descriptor
+        descrom[DESC_FSCFG_ADDR + 87 + 4] <= 8'h6b;// 4 wTotalLength - Size of class-specific VS descriptor
         descrom[DESC_FSCFG_ADDR + 87 + 5] <= 8'h00;// 5 wTotalLength - Size of class-specific VS descriptor
         descrom[DESC_FSCFG_ADDR + 87 + 6] <= (`VIDEO_DATA_EP_NUM | 8'h80);// 6 bEndpointAddress - Iso EP for video streaming
         descrom[DESC_FSCFG_ADDR + 87 + 7] <= 8'h00;// 7 bmInfo - No dynamic format change
@@ -334,7 +335,7 @@ module usb_desc #(
         descrom[DESC_FSCFG_ADDR + 101 + 1] <= `USB_DESCTYPE_CS_INTERFACE;// 1 bDescriptorType - Class-specific Interface
         descrom[DESC_FSCFG_ADDR + 101 + 2] <= `USB_VS_FORMAT_UNCOMPRESSED;// 2 bDescriptorSubtype - FORMAT UNCOMPRESSED
         descrom[DESC_FSCFG_ADDR + 101 + 3] <= 8'h01;// 3 bFormatIndex
-        descrom[DESC_FSCFG_ADDR + 101 + 4] <= 8'h01;// 4 bNumFrameDescriptors - 1 Frame descriptor followed
+        descrom[DESC_FSCFG_ADDR + 101 + 4] <= 8'h02;// 4 bNumFrameDescriptors - 2 frame descriptors follow
 
         descrom[DESC_FSCFG_ADDR + 101 + 5 ] <= 8'h59;// 5-20  guidFormat - YUY2 Video format
         descrom[DESC_FSCFG_ADDR + 101 + 6 ] <= 8'h55;// 6
@@ -354,7 +355,7 @@ module usb_desc #(
         descrom[DESC_FSCFG_ADDR + 101 + 20] <= 8'h71;// 20
 
         descrom[DESC_FSCFG_ADDR + 101 + 21] <= `BITS_PER_PIXEL;// 21 bBitsPerPixel - 16 bits
-        descrom[DESC_FSCFG_ADDR + 101 + 22] <= 8'h01;// 22 bDefaultFrameIndex
+        descrom[DESC_FSCFG_ADDR + 101 + 22] <= DEFAULT_SCALE_2X ? 8'd1 : 8'd2;// 22 bDefaultFrameIndex
         descrom[DESC_FSCFG_ADDR + 101 + 23] <= 8'd00;// 23 bAspectRatioX
         descrom[DESC_FSCFG_ADDR + 101 + 24] <= 8'd00;// 24 bAspectRatioY
         descrom[DESC_FSCFG_ADDR + 101 + 25] <= 8'h00;// 25 bmInterlaceFlags - No interlaces mode
@@ -363,12 +364,12 @@ module usb_desc #(
         descrom[DESC_FSCFG_ADDR + 128 + 0 ] <= 8'h1E;// 0 bLength
         descrom[DESC_FSCFG_ADDR + 128 + 1 ] <= `USB_DESCTYPE_CS_INTERFACE;// 1 bDescriptorType - Class-specific Interface
         descrom[DESC_FSCFG_ADDR + 128 + 2 ] <= `USB_VS_FRAME_UNCOMPRESSED;// 2 bDescriptorSubtype
-        descrom[DESC_FSCFG_ADDR + 128 + 3 ] <= 8'h01;// 3 bFormatIndex
+        descrom[DESC_FSCFG_ADDR + 128 + 3 ] <= 8'h01;// 3 bFrameIndex
         descrom[DESC_FSCFG_ADDR + 128 + 4 ] <= 8'h01;// 4 bmCapabilities - Still image capture method 1
-        descrom[DESC_FSCFG_ADDR + 128 + 5 ] <= {`WIDTH}[7:0];// 5  wWidth - 480 pixels
-        descrom[DESC_FSCFG_ADDR + 128 + 6 ] <= {`WIDTH}[15:8];// 6  wWidth - 480 pixels
-        descrom[DESC_FSCFG_ADDR + 128 + 7 ] <= {`HEIGHT}[7:0];// 7  wHeight - 320 pixels
-        descrom[DESC_FSCFG_ADDR + 128 + 8 ] <= {`HEIGHT}[15:8];// 8  wHeight - 320 pixels
+        descrom[DESC_FSCFG_ADDR + 128 + 5 ] <= {`WIDTH}[7:0];// 5  wWidth
+        descrom[DESC_FSCFG_ADDR + 128 + 6 ] <= {`WIDTH}[15:8];// 6  wWidth
+        descrom[DESC_FSCFG_ADDR + 128 + 7 ] <= {`HEIGHT}[7:0];// 7  wHeight
+        descrom[DESC_FSCFG_ADDR + 128 + 8 ] <= {`HEIGHT}[15:8];// 8  wHeight
         descrom[DESC_FSCFG_ADDR + 128 + 9 ] <= {`MIN_BIT_RATE}[7:0];// 9  dwMinBitRate
         descrom[DESC_FSCFG_ADDR + 128 + 10] <= {`MIN_BIT_RATE}[15:8];// 10 dwMinBitRate
         descrom[DESC_FSCFG_ADDR + 128 + 11] <= {`MIN_BIT_RATE}[23:16];// 11 dwMinBitRate
@@ -390,33 +391,85 @@ module usb_desc #(
         descrom[DESC_FSCFG_ADDR + 128 + 27] <= {`FRAME_INTERVAL}[15:8];// 27 dwFrameInterval
         descrom[DESC_FSCFG_ADDR + 128 + 28] <= {`FRAME_INTERVAL}[23:16];// 28 dwFrameInterval
         descrom[DESC_FSCFG_ADDR + 128 + 29] <= {`FRAME_INTERVAL}[31:24];// 29 dwFrameInterval
+        //---------------- Class-specific VS Frame Descriptor ----------------
+        descrom[DESC_FSCFG_ADDR + 158 + 0 ] <= 8'h1E;// 0 bLength
+        descrom[DESC_FSCFG_ADDR + 158 + 1 ] <= `USB_DESCTYPE_CS_INTERFACE;// 1 bDescriptorType - Class-specific Interface
+        descrom[DESC_FSCFG_ADDR + 158 + 2 ] <= `USB_VS_FRAME_UNCOMPRESSED;// 2 bDescriptorSubtype
+        descrom[DESC_FSCFG_ADDR + 158 + 3 ] <= 8'h02;// 3 bFrameIndex
+        descrom[DESC_FSCFG_ADDR + 158 + 4 ] <= 8'h01;// 4 bmCapabilities - Still image capture method 1
+        descrom[DESC_FSCFG_ADDR + 158 + 5 ] <= {16'd160}[7:0];// 5  wWidth
+        descrom[DESC_FSCFG_ADDR + 158 + 6 ] <= {16'd160}[15:8];// 6  wWidth
+        descrom[DESC_FSCFG_ADDR + 158 + 7 ] <= {16'd144}[7:0];// 7  wHeight
+        descrom[DESC_FSCFG_ADDR + 158 + 8 ] <= {16'd144}[15:8];// 8  wHeight
+        descrom[DESC_FSCFG_ADDR + 158 + 9 ] <= {32'd22118400}[7:0];// 9  dwMinBitRate
+        descrom[DESC_FSCFG_ADDR + 158 + 10] <= {32'd22118400}[15:8];// 10 dwMinBitRate
+        descrom[DESC_FSCFG_ADDR + 158 + 11] <= {32'd22118400}[23:16];// 11 dwMinBitRate
+        descrom[DESC_FSCFG_ADDR + 158 + 12] <= {32'd22118400}[31:24];// 12 dwMinBitRate
+        descrom[DESC_FSCFG_ADDR + 158 + 13] <= {32'd22118400}[7:0];// 13 dwMaxBitRate
+        descrom[DESC_FSCFG_ADDR + 158 + 14] <= {32'd22118400}[15:8];// 14 dwMaxBitRate
+        descrom[DESC_FSCFG_ADDR + 158 + 15] <= {32'd22118400}[23:16];// 15 dwMaxBitRate
+        descrom[DESC_FSCFG_ADDR + 158 + 16] <= {32'd22118400}[31:24];// 16 dwMaxBitRate
+        descrom[DESC_FSCFG_ADDR + 158 + 17] <= {32'd46080}[7:0];// 17 dwMaxVideoFrameBufSize
+        descrom[DESC_FSCFG_ADDR + 158 + 18] <= {32'd46080}[15:8];// 18 dwMaxVideoFrameBufSize
+        descrom[DESC_FSCFG_ADDR + 158 + 19] <= {32'd46080}[23:16];// 19 dwMaxVideoFrameBufSize
+        descrom[DESC_FSCFG_ADDR + 158 + 20] <= {32'd46080}[31:24];// 20 dwMaxVideoFrameBufSize
+        descrom[DESC_FSCFG_ADDR + 158 + 21] <= {`FRAME_INTERVAL}[7:0];// 21 dwDefaultFrameInterval
+        descrom[DESC_FSCFG_ADDR + 158 + 22] <= {`FRAME_INTERVAL}[15:8];// 22 dwDefaultFrameInterval
+        descrom[DESC_FSCFG_ADDR + 158 + 23] <= {`FRAME_INTERVAL}[23:16];// 23 dwDefaultFrameInterval
+        descrom[DESC_FSCFG_ADDR + 158 + 24] <= {`FRAME_INTERVAL}[31:24];// 24 dwDefaultFrameInterval
+        descrom[DESC_FSCFG_ADDR + 158 + 25] <= 8'h01;// 25 dwDefaultFrameIntervalType
+        descrom[DESC_FSCFG_ADDR + 158 + 26] <= {`FRAME_INTERVAL}[7:0];// 26 dwFrameInterval
+        descrom[DESC_FSCFG_ADDR + 158 + 27] <= {`FRAME_INTERVAL}[15:8];// 27 dwFrameInterval
+        descrom[DESC_FSCFG_ADDR + 158 + 28] <= {`FRAME_INTERVAL}[23:16];// 28 dwFrameInterval
+        descrom[DESC_FSCFG_ADDR + 158 + 29] <= {`FRAME_INTERVAL}[31:24];// 29 dwFrameInterval
         //Color Matching Descriptor
-        descrom[DESC_FSCFG_ADDR + 158 + 0] <= 8'd6;// 0 bLength
-        descrom[DESC_FSCFG_ADDR + 158 + 1] <= `USB_DESCTYPE_CS_INTERFACE;// 1 bDescriptorType
-        descrom[DESC_FSCFG_ADDR + 158 + 2] <= 8'd13;// 2 bDescriptorSubtype
-        descrom[DESC_FSCFG_ADDR + 158 + 3] <= 8'd1;// 3 bColorPrimaries
-        descrom[DESC_FSCFG_ADDR + 158 + 4] <= 8'd1;// 4 bTransferCharacteristics
-        descrom[DESC_FSCFG_ADDR + 158 + 5] <= 8'd4;// 5 bMatrixCoefficients
+        descrom[DESC_FSCFG_ADDR + 188 + 0] <= 8'd6;// 0 bLength
+        descrom[DESC_FSCFG_ADDR + 188 + 1] <= `USB_DESCTYPE_CS_INTERFACE;// 1 bDescriptorType
+        descrom[DESC_FSCFG_ADDR + 188 + 2] <= 8'd13;// 2 bDescriptorSubtype
+        descrom[DESC_FSCFG_ADDR + 188 + 3] <= 8'd1;// 3 bColorPrimaries
+        descrom[DESC_FSCFG_ADDR + 188 + 4] <= 8'd1;// 4 bTransferCharacteristics
+        descrom[DESC_FSCFG_ADDR + 188 + 5] <= 8'd4;// 5 bMatrixCoefficients
         //Video Streaming Interface Descriptor
         //Alternate Setting 1
-        descrom[DESC_FSCFG_ADDR + 164 + 0] <= 8'h09;// 0 bLength
-        descrom[DESC_FSCFG_ADDR + 164 + 1] <= `USB_DESCTYPE_INTERFACE;// 1 bDescriptorType - Interface
-        descrom[DESC_FSCFG_ADDR + 164 + 2] <= `UVC_VS_INTERFACE;// 2 bInterfaceNumber - Interface 1
-        descrom[DESC_FSCFG_ADDR + 164 + 3] <= 8'h01;// 3 bAlternateSetting - 1
-        descrom[DESC_FSCFG_ADDR + 164 + 4] <= 8'h01;// 4 bNumEndpoints
-        descrom[DESC_FSCFG_ADDR + 164 + 5] <= `USB_CLASS_VIDEO;// 5 bInterfaceClass - Video Class
-        descrom[DESC_FSCFG_ADDR + 164 + 6] <= `USB_VIDEO_STREAMING;// 6 bInterfaceSubClass - VideoStreaming Interface
-        descrom[DESC_FSCFG_ADDR + 164 + 7] <= 8'h00;// 7 bInterfaceProtocol - No protocol
-        descrom[DESC_FSCFG_ADDR + 164 + 8] <= 8'h00;// 8 iInterface - Unused
+        descrom[DESC_FSCFG_ADDR + 194 + 0] <= 8'h09;// 0 bLength
+        descrom[DESC_FSCFG_ADDR + 194 + 1] <= `USB_DESCTYPE_INTERFACE;// 1 bDescriptorType - Interface
+        descrom[DESC_FSCFG_ADDR + 194 + 2] <= `UVC_VS_INTERFACE;// 2 bInterfaceNumber - Interface 1
+        descrom[DESC_FSCFG_ADDR + 194 + 3] <= 8'h01;// 3 bAlternateSetting - 1
+        descrom[DESC_FSCFG_ADDR + 194 + 4] <= 8'h01;// 4 bNumEndpoints
+        descrom[DESC_FSCFG_ADDR + 194 + 5] <= `USB_CLASS_VIDEO;// 5 bInterfaceClass - Video Class
+        descrom[DESC_FSCFG_ADDR + 194 + 6] <= `USB_VIDEO_STREAMING;// 6 bInterfaceSubClass - VideoStreaming Interface
+        descrom[DESC_FSCFG_ADDR + 194 + 7] <= 8'h00;// 7 bInterfaceProtocol - No protocol
+        descrom[DESC_FSCFG_ADDR + 194 + 8] <= 8'h00;// 8 iInterface - Unused
 
         //Standard VS Isochronous Video Data Endpoint Descriptor
-        descrom[DESC_FSCFG_ADDR + 173 + 0] <= 8'h07;// 0 bLength
-        descrom[DESC_FSCFG_ADDR + 173 + 1] <= `USB_DESCTYPE_ENDPOINT;// 1 bDescriptorType
-        descrom[DESC_FSCFG_ADDR + 173 + 2] <= (`VIDEO_DATA_EP_NUM | 8'h80);// 2 bEndpointAddress - IN Endpoint
-        descrom[DESC_FSCFG_ADDR + 173 + 3] <= 8'h05;// 3 bmAttributes - Isochronous EP (Asynchronous)
-        descrom[DESC_FSCFG_ADDR + 173 + 4] <= {`PACKET_SIZE}[7:0];// 4 wMaxPacketSize 1x 1023 bytes
-        descrom[DESC_FSCFG_ADDR + 173 + 5] <= {3'd0,{`ADDITIONAL_PACKET}[1:0],{`PACKET_SIZE}[10:8]};// 5 wMaxPacketSize
-        descrom[DESC_FSCFG_ADDR + 173 + 6] <= 8'h01;// 6 bInterval
+        descrom[DESC_FSCFG_ADDR + 203 + 0] <= 8'h07;// 0 bLength
+        descrom[DESC_FSCFG_ADDR + 203 + 1] <= `USB_DESCTYPE_ENDPOINT;// 1 bDescriptorType
+        descrom[DESC_FSCFG_ADDR + 203 + 2] <= (`VIDEO_DATA_EP_NUM | 8'h80);// 2 bEndpointAddress - IN Endpoint
+        descrom[DESC_FSCFG_ADDR + 203 + 3] <= 8'h05;// 3 bmAttributes - Isochronous EP (Asynchronous)
+        descrom[DESC_FSCFG_ADDR + 203 + 4] <= {`PACKET_SIZE}[7:0];// 4 wMaxPacketSize: 1024-byte transaction
+        descrom[DESC_FSCFG_ADDR + 203 + 5] <= 8'h04;// 5 wMaxPacketSize
+        descrom[DESC_FSCFG_ADDR + 203 + 6] <= 8'h01;// 6 bInterval
+
+        //Video Streaming Interface Descriptor
+        //Alternate Setting 2 (two transactions per microframe)
+        descrom[DESC_FSCFG_ADDR + 210 + 0] <= 8'h09;// 0 bLength
+        descrom[DESC_FSCFG_ADDR + 210 + 1] <= `USB_DESCTYPE_INTERFACE;// 1 bDescriptorType - Interface
+        descrom[DESC_FSCFG_ADDR + 210 + 2] <= `UVC_VS_INTERFACE;// 2 bInterfaceNumber - Interface 1
+        descrom[DESC_FSCFG_ADDR + 210 + 3] <= 8'h02;// 3 bAlternateSetting - 2
+        descrom[DESC_FSCFG_ADDR + 210 + 4] <= 8'h01;// 4 bNumEndpoints
+        descrom[DESC_FSCFG_ADDR + 210 + 5] <= `USB_CLASS_VIDEO;// 5 bInterfaceClass - Video Class
+        descrom[DESC_FSCFG_ADDR + 210 + 6] <= `USB_VIDEO_STREAMING;// 6 bInterfaceSubClass - VideoStreaming Interface
+        descrom[DESC_FSCFG_ADDR + 210 + 7] <= 8'h00;// 7 bInterfaceProtocol - No protocol
+        descrom[DESC_FSCFG_ADDR + 210 + 8] <= 8'h00;// 8 iInterface - Unused
+
+        //Standard VS Isochronous Video Data Endpoint Descriptor
+        descrom[DESC_FSCFG_ADDR + 219 + 0] <= 8'h07;// 0 bLength
+        descrom[DESC_FSCFG_ADDR + 219 + 1] <= `USB_DESCTYPE_ENDPOINT;// 1 bDescriptorType
+        descrom[DESC_FSCFG_ADDR + 219 + 2] <= (`VIDEO_DATA_EP_NUM | 8'h80);// 2 bEndpointAddress - IN Endpoint
+        descrom[DESC_FSCFG_ADDR + 219 + 3] <= 8'h05;// 3 bmAttributes - Isochronous EP (Asynchronous)
+        descrom[DESC_FSCFG_ADDR + 219 + 4] <= {`PACKET_SIZE}[7:0];// 4 wMaxPacketSize: 1024-byte transaction
+        descrom[DESC_FSCFG_ADDR + 219 + 5] <= {3'd0,{`ADDITIONAL_PACKET}[1:0],{`PACKET_SIZE}[10:8]};// 5 wMaxPacketSize
+        descrom[DESC_FSCFG_ADDR + 219 + 6] <= 8'h01;// 6 bInterval
 
         /* UAC Interface*/
         // Stick to UAC 2.0 revision. The difference between revisions is HUGE.
@@ -467,8 +520,8 @@ module usb_desc #(
         descrom[DESC_UAC_ADDR + 34 + 1] <= `USB_DESCTYPE_CS_INTERFACE;// 1 bDescriptorType
         descrom[DESC_UAC_ADDR + 34 + 2] <= `UAC_INPUT_TERMINAL;// 2 bDescriptorSubType
         descrom[DESC_UAC_ADDR + 34 + 3] <= 8'h02;// 3 bTerminalID
-        descrom[DESC_UAC_ADDR + 34 + 4] <= {`UAC_INPUT_TERMINAL_MICROPHONE}[7:0];// 4-5 wTerminalType ???
-        descrom[DESC_UAC_ADDR + 34 + 5] <= {`UAC_INPUT_TERMINAL_MICROPHONE}[15:8];
+        descrom[DESC_UAC_ADDR + 34 + 4] <= {`UAC_TERMINAL_LINE_CONNECTOR}[7:0];// 4-5 wTerminalType: line input
+        descrom[DESC_UAC_ADDR + 34 + 5] <= {`UAC_TERMINAL_LINE_CONNECTOR}[15:8];
         descrom[DESC_UAC_ADDR + 34 + 6] <= 8'h00;// 6 bAssocTerminal
         descrom[DESC_UAC_ADDR + 34 + 7] <= 8'h01;// 7 bCSourceID
         descrom[DESC_UAC_ADDR + 34 + 8] <= 8'h02;// 8 bNrChannels
@@ -547,7 +600,7 @@ module usb_desc #(
         descrom[DESC_UAC_ADDR + 103 + 1] <= `USB_DESCTYPE_ENDPOINT;// 1 bDescriptorType
         descrom[DESC_UAC_ADDR + 103 + 2] <= (`AUDIO_DATA_EP_NUM | 8'h80);// 2 bEndpointAddress - IN Endpoint
         descrom[DESC_UAC_ADDR + 103 + 3] <= 8'h05;// 3 bmAttributes - Isochronous EP (Asynchronous)
-        descrom[DESC_UAC_ADDR + 103 + 4] <= {`UAC_PACKET_SIZE}[7:0];// 4 wMaxPacketSize 1x 1023 bytes
+        descrom[DESC_UAC_ADDR + 103 + 4] <= {`UAC_PACKET_SIZE}[7:0];// 4 wMaxPacketSize: 1024-byte transaction
         descrom[DESC_UAC_ADDR + 103 + 5] <= {3'd0, 2'b00,{`UAC_PACKET_SIZE}[10:8]};// 5 wMaxPacketSize
         descrom[DESC_UAC_ADDR + 103 + 6] <= 8'h01;// 6 bInterval
 

@@ -1,6 +1,7 @@
 // system_monitor.v
 
 module system_monitor(
+    input               appear_off,
     input               clk,
     input               reset,
     input               BTN_A,
@@ -25,6 +26,7 @@ module system_monitor(
     output  reg [8:0]   MCU_buttons,
     input   [6:0]       hVolume,
     input   [7:0]       pmic_sys_status,
+    input   [7:0]       temperature,
     input               hHeadphones,
     input               gSecondEna,
     input               gHalfSecondEna,
@@ -38,14 +40,22 @@ module system_monitor(
     output  reg [63:0]  paletteBGIn,
     output  reg [63:0]  paletteOBJ0In,
     output  reg [63:0]  paletteOBJ1In,
+    output  reg [2:0]   gbc_color_temp,
     input               gbc_mode,
     input   [63:0]      gpd,
     input   [7:0]       uart_rx_data,
     input               uart_rx_val,
     input               uart_tx_busy,
     output  [7:0]       uart_tx_data,
-    output              uart_tx_val
+    output              uart_tx_val,
+
+    input               VERSION_DET,
+    output              POWERED_BY_LIPO
 );
+
+    localparam [1:0] PALETTE_HOTKEY_EVENT_NONE = 2'd0;
+    localparam [1:0] PALETTE_HOTKEY_EVENT_UP   = 2'd1;
+    localparam [1:0] PALETTE_HOTKEY_EVENT_DOWN = 2'd2;
 
     wire    [6:0]   rx_address;
     wire    [79:0]  rx_data;
@@ -92,6 +102,7 @@ module system_monitor(
     reg lowpowerBacklight = 1'b0;
     reg [3:0] lowerpowerOldBL;
     reg request_SystemStatusExtended = 1'b0;
+    reg [1:0] palette_hotkey_event = PALETTE_HOTKEY_EVENT_NONE;
 
     reg [13:0] volt;
     wire       bat_is_LI;
@@ -102,11 +113,12 @@ module system_monitor(
             system_control <= 16'd0;
             MCU_buttons    <= 9'd0;
             request_gpd   <= 1'b0;
+            gbc_color_temp <= 3'd0;
+            palette_hotkey_event <= PALETTE_HOTKEY_EVENT_NONE;
         end else begin
             request_buttons              <= 1'b0;
             request_version              <= 1'b0;
             updateBrightness             <= 1'b0;
-            request_SystemStatusExtended <= 1'b0;
 
             if (gHalfSecondEna) begin
                LCD_BACKLIGHT_INIT  <= 1'd1;
@@ -143,6 +155,11 @@ module system_monitor(
                 if(rx_address == 7'd4) begin
                     system_control  <=  rx_data[15:0];
                 end
+                if(rx_address == 7'hE) begin
+                    // Keep this in sync with MCU fpga_tx.c kTxCmd_GBCColorTemp = 0xE.
+                    // GBC color temperature level (len 2): [level][0x00]
+                    gbc_color_temp <= (rx_data[15:8] != 8'd0 || rx_data[7:0] == 8'd0) ? rx_data[15:8] : rx_data[7:0];
+                end
                 if(rx_address == 7'd2) begin
                     request_buttons <= 1'b1;
                 end
@@ -165,6 +182,30 @@ module system_monitor(
                         brightness <= brightness + 9'd1;
                         blockBrightnessReceive <= 2'd3;
                         updateBrightness <= 1'b1;
+                    end
+                end
+                if((btnUp_sr[15:0] == 16'h8000)&&~btnMenu_r2) begin
+                    if (gbc_mode && (gbc_color_temp < 3'd5))
+                    begin
+                        gbc_color_temp <= gbc_color_temp + 3'd1;
+                        request_SystemStatusExtended <= 1'b1;
+                    end
+                    else if (~gbc_mode)
+                    begin
+                        palette_hotkey_event <= PALETTE_HOTKEY_EVENT_UP;
+                        request_SystemStatusExtended <= 1'b1;
+                    end
+                end
+                if((btnDown_sr[15:0] == 16'h8000)&&~btnMenu_r2) begin
+                    if (gbc_mode && (gbc_color_temp > 3'd0))
+                    begin
+                        gbc_color_temp <= gbc_color_temp - 3'd1;
+                        request_SystemStatusExtended <= 1'b1;
+                    end
+                    else if (~gbc_mode)
+                    begin
+                        palette_hotkey_event <= PALETTE_HOTKEY_EVENT_DOWN;
+                        request_SystemStatusExtended <= 1'b1;
                     end
                 end
             end
@@ -192,14 +233,21 @@ module system_monitor(
                 request_gpd <= 1'b0; // Clear after sending once
             end
 
+            if (write_done && tx_channel == 8 && request_SystemStatusExtended) begin
+                request_SystemStatusExtended <= 1'b0;
+                palette_hotkey_event <= PALETTE_HOTKEY_EVENT_NONE;
+            end
+
         end
     end
 
     reg menuDown = 1'b0;
     always@(posedge clk)
     begin
-        if(reset) begin
+        if( reset | appear_off ) begin    // disable menu when appropriate, reset or appear off
             menuDisabled <= 1'b1;
+            btnMenu_r1 <= 1'b1; // active-low button: released
+            btnMenu_r2 <= 1'b1;
         end else begin
             btnMenu_r1 <= BTN_MENU;
             btnMenu_r2 <= btnMenu_r1;
@@ -252,7 +300,18 @@ module system_monitor(
         else
             lcdcount <= 'd0;
 
-    assign LCD_PWM = LCD_INIT_DONE&LCD_BACKLIGHT_INIT ? (lcdcount <= {brightness[3:0], 4'd0}) : 1'd0;
+
+    // control backlight through external signal, for example, tied to emulator reset
+    always_comb begin 
+        LCD_PWM = 1'b0;
+        if (appear_off) begin 
+            LCD_PWM = 1'b0;
+        end 
+        else begin // leave back light on
+            LCD_PWM = LCD_INIT_DONE&LCD_BACKLIGHT_INIT ? (lcdcount <= {brightness[3:0], 4'd0}) : 1'd0;
+        end
+    end
+//////    assign LCD_PWM = LCD_INIT_DONE&LCD_BACKLIGHT_INIT ? (lcdcount <= {brightness[3:0], 4'd0}) : 1'd0;
 
 
     // 8.388608Mhz clock -> ~119.2ns
@@ -280,14 +339,46 @@ module system_monitor(
         end
     end
 
+   assign POWERED_BY_LIPO = bat_is_LI;   // bring to top level
+
    assign     bat_is_LI = startup_select[10];
    reg [21:0] volt_sum;
    reg [8:0]  volt_cnt;
    reg        transmitVolt;
 
-   wire [13:0] VOLTAGE_FULL   = bat_is_LI ? 14'd1423 : 14'd1367; //  3.75V LI : 3.6V AA
-   wire [13:0] VOLTAGE_CRIT   = bat_is_LI ? 14'd1145 : 14'd997;  //  3.0V  LI : 2.6V AA
-   wire [13:0] VOLTAGE_RED    = bat_is_LI ? 14'd1182 : 14'd1071; //  3.1V  LI : 2.8V AA
+   // ==============================================================
+   // BATTERY VOLTAGE CALCULATIONS
+   //
+   // ADC_LEVEL = VBAT * (R2 / (R1+R2)) * 2048 
+   //
+   // where R1,R2 form voltage divider with R1 connected to VBAT and R2 to GND.
+   //
+   // R1 and R2 differ between different PCB versions, determined by 
+   // VERSION_DET
+   // 
+   // The following ADC levels are derived by ratio scaling old thresholds
+   // to get a voltage and using the "ADC_LEVEL" shown above
+   // ==============================================================
+//   Previous thresolds
+//   wire [13:0] VOLTAGE_FULL   = bat_is_LI ? 14'd1423 : 14'd1367; //  3.75V LI : 3.6V AA
+//   wire [13:0] VOLTAGE_CRIT   = bat_is_LI ? 14'd1145 : 14'd997;  //  3.0V  LI : 2.6V AA
+//   wire [13:0] VOLTAGE_RED    = bat_is_LI ? 14'd1182 : 14'd1071; //  3.1V  LI : 2.8V AA
+
+   wire [13:0] VOLTAGE_FULL_V0   = bat_is_LI ? 14'd1509 : 14'd1616; //  4.2V LI : 4.5V AA
+   wire [13:0] VOLTAGE_CRIT_V0   = bat_is_LI ? 14'd1185 : 14'd1149; //  3.3V LI : 3.2V AA
+   wire [13:0] VOLTAGE_RED_V0    = bat_is_LI ? 14'd1221 : 14'd1257; //  3.4V LI : 3.5V AA
+   wire [13:0] VOLTAGE_1V8_V0    = 14'd646;
+
+   wire [13:0] VOLTAGE_FULL_V1   = bat_is_LI ? 14'd1551 : 14'd1661; //  4.2V LI : 4.5V AA
+   wire [13:0] VOLTAGE_CRIT_V1   = bat_is_LI ? 14'd1218 : 14'd1181; //  3.3V LI : 3.2V AA
+   wire [13:0] VOLTAGE_RED_V1    = bat_is_LI ? 14'd1255 : 14'd1292; //  3.4V LI : 3.5V AA
+   wire [13:0] VOLTAGE_1V8_V1    = 14'd700;  // should be 14'd664 through calculation, adding some bias
+
+   wire [13:0] VOLTAGE_FULL      = VERSION_DET ? VOLTAGE_FULL_V1 : VOLTAGE_FULL_V0; 
+   wire [13:0] VOLTAGE_CRIT      = VERSION_DET ? VOLTAGE_CRIT_V1 : VOLTAGE_CRIT_V0; 
+   wire [13:0] VOLTAGE_RED       = VERSION_DET ? VOLTAGE_RED_V1  : VOLTAGE_RED_V0;     
+   wire [13:0] VOLTAGE_1V8       = VERSION_DET ? VOLTAGE_1V8_V1  : VOLTAGE_1V8_V0;      
+
 
    reg blink;
 
@@ -348,7 +439,8 @@ module system_monitor(
          LED_Yellow  <= 1'd0;
          LED_White   <= 1'd0;
 
-         if (volt >= 700) begin // ~1.8V
+        if (volt >= VOLTAGE_1V8) begin
+//         if (volt >= 700) begin // ~1.8V
 
             if (pmic_sys_status[2]) begin // charging
 
@@ -372,10 +464,11 @@ module system_monitor(
     wire [6:0] tx_address;
     wire       write;
 
+
     wire [13:0] buttons = {
         4'd0,
         menuDisabled,
-        ~BTN_MENU,
+        ~btnMenu_r2, // use the gClk-staged menu state for the UART payload
         BTN_DPAD_DOWN,
         BTN_DPAD_LEFT,
         BTN_DPAD_RIGHT,
@@ -386,12 +479,14 @@ module system_monitor(
         BTN_START
     };
 
+
     reg [13:0] version = {
         1'd0,  // 1 bit reserved
         1'd0,  // 1 bit debug,
-        6'd8,  // 6 bits minor version
+        6'd13, // 6 bits minor version
         6'd18  // 6 bits major version
     };
+
 
     localparam  NUM_CH = 10;
     wire [$clog2(NUM_CH)-1:0] tx_channel;
@@ -427,10 +522,71 @@ module system_monitor(
 
     wire [7:0] tx_bytepos;
 
-    wire [7:0] tx_senddata = (tx_channel == 0 && tx_bytepos == 0) ? {2'd0, volt[13:8]} : // AA
+    // new PCB: VERSION_DET == 1'b0
+    // old PCB: VERSION_DET == 1'b1
+    // * previous version of firmware and FPGA design didn't use most significant bit in "tx_senddata"
+    // * by default it's set to 0.  To maintain compatibility, a value of 0 should correspond to legacy
+    // * so we store the negation of VERION_DET
+    wire pcb_version = !VERSION_DET;
+    
+    // To avoid long logic delay, migrate toward parallel implementation via case statement, above.
+    // Note that if the number of channels increases beyond 10, may need to adjust the static
+    // width of the "tx_channel" below
+    reg [7:0] tx_senddata;
+    always_comb begin 
+        tx_senddata = 8'd0;
+
+        case ({tx_channel, tx_bytepos})
+            // AA battery
+            {4'd0, 8'd0}:    tx_senddata = {pcb_version, 1'd0, volt[13:8]}; 
+            {4'd0, 8'd1}:    tx_senddata = volt[7:0];        
+            // LiPo
+            {4'd1, 8'd0}:    tx_senddata = {pcb_version, 1'd0, volt[13:8]}; 
+            {4'd1, 8'd1}:    tx_senddata = volt[7:0]; 
+            // Buttons
+            {4'd2, 8'd0}:    tx_senddata = {2'd0, buttons[13:8]} ; 
+            {4'd2, 8'd1}:    tx_senddata = buttons[7:0];    
+            //Audio+Brightness
+            {4'd3, 8'd0}:    tx_senddata = {2'd0, audio_brightness[13:8]}; 
+            {4'd3, 8'd1}:    tx_senddata = audio_brightness[7:0];    
+            // System Control
+            {4'd4, 8'd0}:    tx_senddata = {2'd0, system_control[13:8]}; 
+            {4'd4, 8'd1}:    tx_senddata = system_control[7:0];   
+            // PMIC (NEED TO CORRECT TIMING VIOLATIONS HERE)
+            {4'd5, 8'd0}:    tx_senddata = {2'd0, mic_sys_status[13:8]}; // pmic sys status
+            {4'd5, 8'd1}:    tx_senddata = mic_sys_status[7:0];     
+            // Version 
+            {4'd6, 8'd0}:    tx_senddata = {2'd0, version[13:8]}; 
+            {4'd6, 8'd1}:    tx_senddata = version[7:0];   
+            // Reserved (temperature for testing purposes)
+            {4'd7, 8'd0}:    tx_senddata = temperature[7:0];  // only care about integer part 
+            {4'd7, 8'd1}:    tx_senddata = 8'd0;   
+            {4'd7, 8'd2}:    tx_senddata = 8'd0; 
+            {4'd7, 8'd3}:    tx_senddata = 8'd0;   
+            // System status
+            {4'd8, 8'd0}:    tx_senddata = {6'd0, gbc_mode, lowpowerBacklight}; 
+            {4'd8, 8'd1}:    tx_senddata = {5'd0, gbc_color_temp};   
+            {4'd8, 8'd2}:    tx_senddata = {6'd0, palette_hotkey_event}; 
+            {4'd8, 8'd3}:    tx_senddata = 8'd0;   
+            // Combined game palette
+            {4'd9, 8'd0}:    tx_senddata = gpd[7:0]; 
+            {4'd9, 8'd1}:    tx_senddata = gpd[15:8];   
+            {4'd9, 8'd2}:    tx_senddata = gpd[23:16]; 
+            {4'd9, 8'd3}:    tx_senddata = gpd[31:24];   
+            {4'd9, 8'd4}:    tx_senddata = gpd[39:32]; 
+            {4'd9, 8'd5}:    tx_senddata = gpd[47:40];   
+            {4'd9, 8'd6}:    tx_senddata = gpd[55:48]; 
+            {4'd9, 8'd7}:    tx_senddata = gpd[63:56];           
+
+            default:         tx_senddata = 8'd0;
+        endcase
+    end
+
+/*
+    wire [7:0] tx_senddata = (tx_channel == 0 && tx_bytepos == 0) ? {pcb_version, 1'd0, volt[13:8]} : // AA, 
                              (tx_channel == 0 && tx_bytepos == 1) ? volt[7:0] :
 
-                             (tx_channel == 1 && tx_bytepos == 0) ? {2'd0, volt[13:8]} : // Lithium
+                             (tx_channel == 1 && tx_bytepos == 0) ? {pcb_version, 1'd0, volt[13:8]} : // Lithium, 
                              (tx_channel == 1 && tx_bytepos == 1) ? volt[7:0] :
 
                              (tx_channel == 2 && tx_bytepos == 0) ? {2'd0, buttons[13:8]} : // Buttons
@@ -454,8 +610,9 @@ module system_monitor(
                              (tx_channel == 7 && tx_bytepos == 3) ? 8'd0 :
 
                              (tx_channel == 8 && tx_bytepos == 0) ? {6'd0, gbc_mode, lowpowerBacklight} : // System Status Extended
-                             (tx_channel == 8 && tx_bytepos == 1) ? 8'd0 :
-                             (tx_channel == 8 && tx_bytepos == 2) ? 8'd0 :
+                             (tx_channel == 8 && tx_bytepos == 1) ? {5'd0, gbc_color_temp} :
+                             // [1:0] palette hotkey event (one-shot): 0=none, 1=up, 2=down
+                             (tx_channel == 8 && tx_bytepos == 2) ? {6'd0, palette_hotkey_event} :
                              (tx_channel == 8 && tx_bytepos == 3) ? 8'd0 :
 
                              (tx_channel == 9 && tx_bytepos == 0) ? gpd[7:0] : // Combined Game Palette Data
@@ -467,7 +624,7 @@ module system_monitor(
                              (tx_channel == 9 && tx_bytepos == 6) ? gpd[55:48] :
                              (tx_channel == 9 && tx_bytepos == 7) ? gpd[63:56] :
                              8'd0;
-
+*/
     wire uartDisabled;
 
     system_monitor_arbiter

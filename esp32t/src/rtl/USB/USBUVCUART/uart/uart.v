@@ -42,23 +42,9 @@ module UART
     reg  [3:0] uart_cts_shreg     ;
     reg        uart_cts_debounced ;
     wire       uart_tx_busy       ;
-    wire [31:0]div_out ;
-    wire       div_cmpl;
     reg  [1:0] div_correct;
 
-    reg [23:0] divider_value;// = CLK_FREQ/(15*BAUD_RATE);
-    // -------------------------------------------------------------------------
-    // UART DIVIDER VALUE
-    // -------------------------------------------------------------------------
-    //always @(posedge CLK or posedge RST) begin
-    //    if (RST) begin
-    //        divider_value <= 24'd0;
-    //    end
-    //    else begin
-    //        //divider_value <= CLK_FREQ/(15*BAUD_RATE);
-    //        divider_value <= CLK_FREQ/(BAUD_RATE);
-    //    end
-    //end
+    reg [23:0] divider_value;
     // -------------------------------------------------------------------------
     // UART RXD DEBAUNCER
     // -------------------------------------------------------------------------
@@ -140,25 +126,36 @@ module UART
 
 
 
-    Fixed_Point_Divider_Top your_instance_name(
-        .clk         (CLK             ), //input clk
-        .dividend    ({CLK_FREQ,2'b00}), //input [31:0] dividend
-        .divisor     (BAUD_RATE       ), //input [31:0] divisor
-        .start       (1'b1            ), //input start
-        .quotient_out(div_out         ), //output [31:0] quotient_out
-        .complete    (div_cmpl        ) //output complete
-    );
+    // Constant divisions are evaluated during elaboration, not in hardware.
+    // Preserve the former IP's three fractional bits: its dividend was
+    // CLK_FREQ*4, so the encoded result is floor(CLK_FREQ*32 / baud).
+    // [28:5] supplies clocks per bit and [4:3] the quarter-clock correction.
+    localparam [31:0] DIV_115200 = {CLK_FREQ, 5'b0} / 32'd115200;
+    localparam [31:0] DIV_460800 = {CLK_FREQ, 5'b0} / 32'd460800;
+    localparam [31:0] DIV_921600 = {CLK_FREQ, 5'b0} / 32'd921600;
 
     always @(posedge CLK or posedge RST) begin
         if (RST) begin
-            divider_value <= 24'd0;
-            div_correct <= 2'b00;
+            divider_value <= DIV_115200[28:5];
+            div_correct <= DIV_115200[4:3];
         end
-        else if (div_cmpl) begin
-        //else begin
-            //divider_value <= CLK_FREQ/(15*BAUD_RATE);
-            divider_value <= div_out[28:5];
-            div_correct <= div_out[4:3];
+        else begin
+            // Unsupported requests use 115200. CDC GET_LINE_CODING still
+            // reports the host's requested value; only these rates are supported.
+            case (BAUD_RATE)
+                32'd460800: begin
+                    divider_value <= DIV_460800[28:5];
+                    div_correct <= DIV_460800[4:3];
+                end
+                32'd921600: begin
+                    divider_value <= DIV_921600[28:5];
+                    div_correct <= DIV_921600[4:3];
+                end
+                default: begin
+                    divider_value <= DIV_115200[28:5];
+                    div_correct <= DIV_115200[4:3];
+                end
+            endcase
         end
     end
     

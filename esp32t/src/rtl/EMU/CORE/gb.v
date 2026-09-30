@@ -33,6 +33,7 @@ module gb (
     input [63:0] paletteBGIn,
     input [63:0] paletteOBJ0In,
     input [63:0] paletteOBJ1In,
+    input [2:0]  gbc_color_temp,
     output gbc_mode,
     output [63:0] gpd,
 
@@ -188,6 +189,8 @@ wire sel_audio = (cpu_addr[15:8] == 8'hff) &&        // audio reg ff10 - ff3f an
 wire sel_ext_bus = sel_rom | sel_cram | sel_wram;
 
 wire sel_boot_rom, sel_boot_rom_cgb;
+
+
 
 // unused cgb registers
 wire sel_FF72  = isGBC && cpu_addr == 16'hff72;            // unused register, all bits read/write
@@ -736,9 +739,16 @@ reg lcd_blankwait = 1'b0;
 always@(posedge clk_sys)
 begin
    if(reset) begin
-       lcd_on <= 1'd0;
-       lcd_vsync <= 1'd0;
-       lcd_clkena <= 1'd0;
+
+// maintain the LCD, even in reset
+       lcd_on <= 1'd1;
+       lcd_vsync <= 1'd1;
+       lcd_clkena <= 1'd1;
+
+//       lcd_on <= 1'd0;
+//       lcd_vsync <= 1'd0;
+//       lcd_clkena <= 1'd0;
+
    end else if(ce) begin
       if (lcd_on_int && ~lcd_off_overwrite) begin
          lcd_clkena <= lcd_clkena_int;
@@ -782,6 +792,7 @@ video video (
     .paletteBGIn      ( paletteBGIn ),
     .paletteOBJ0In     ( paletteOBJ0In ),
     .paletteOBJ1In     ( paletteOBJ1In ),
+    .gbc_color_temp   ( gbc_color_temp ),
     .gpd_out         ( gpd     ),
 
     .irq         ( video_irq     ),

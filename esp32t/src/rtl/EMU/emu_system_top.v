@@ -4,6 +4,8 @@ module emu_system_top
 (
     input               hclk,
     input               pclk,
+    input               fclk, 
+    input               xclk,
     input               reset_n,
     input               POWER_GOOD,
     
@@ -11,6 +13,7 @@ module emu_system_top
     input [63:0]        paletteBGIn,
     input [63:0]        paletteOBJ0In,
     input [63:0]        paletteOBJ1In,
+    input [2:0]         gbc_color_temp,
     input               paletteOff,
     output              gbc_mode,
     output [63:0]       gpd,
@@ -30,9 +33,9 @@ module emu_system_top
     output  [15:0]      CART_A,
     output              CART_CLK,
     output              CART_CS,
-    inout   [7:0]       CART_D,
+    input   [7:0]       CART_D_IN,
+    output  [7:0]       CART_D_OUT,
     output              CART_RD,
-    inout               CART_RST,
     output              CART_WR,
     output              CART_DATA_DIR_E,
 
@@ -40,6 +43,7 @@ module emu_system_top
     output              IR_LED,
 
     inout               LINK_CLK,
+    output              LINK_CLK_DIR_LV,
     input               LINK_IN,
     output              LINK_OUT,
 
@@ -54,9 +58,13 @@ module emu_system_top
     output [14:0]       gb_lcd_data,
     output [1:0]        gb_lcd_mode,
     output              gb_lcd_on,
-    output              gb_lcd_vsync
-    
+    output              gb_lcd_vsync,
+
+    input               latched_cart_rst_n,
+    output  wire        o_emulator_reset    // core reset should be used to paint black screen
+
 );
+
 
     parameter SRSIZE = 15;
 
@@ -150,7 +158,7 @@ module emu_system_top
     wire nCS;
 
     wire [7:0]  CART_DIN; 
-    assign CART_DIN = CART_D;
+    assign CART_DIN = CART_D_IN;
 
     wire cpu_speed;
     wire cpu_halt;
@@ -177,7 +185,7 @@ module emu_system_top
     wire sel_cram = a[15:13] == 3'b101;           // 8k cart ram at $a000
     wire cart_oe = (rd & ~a[15]) | (sel_cram & rd);
 
-    assign CART_RST = 1'bZ;
+
 
     reg gbreset;
     reg gbreset_ungated;
@@ -186,7 +194,11 @@ module emu_system_top
     reg ce_2x_r1;
     always@(posedge hclk)
         ce_2x_r1 <= ce_2x;
-        
+
+
+    // bring out the manufactured reset, will be used to generate black pixels
+    assign o_emulator_reset = gbreset;
+
     always@(posedge hclk or negedge reset_n)
     begin
         if(~reset_n)
@@ -196,7 +208,15 @@ module emu_system_top
         end
         else
         begin
-            CART_RST_r1 <= CART_RST;
+            // latched_cart_rst_n in "xClk" 75 MHz clock domain and was stretched
+            // to 256 clock cycles.  This is sufficient to be detected in ~16MHz hclk
+            // domain.  Use synchronization registers to avoid metastability. 
+            //
+            // CART_RST is pulled high ordinarily, pulled low by cartridge under certain 
+            // circumstances. 
+            ///
+            // => using 3-state synchronizer = > safe to false path
+            CART_RST_r1 <= latched_cart_rst_n;  
             CART_RST_r2 <= CART_RST_r1;
             gbreset_ungated <= ~LCD_INIT_DONE ? 1'b1 : ~CART_RST_r2;
             if(~ce_2x_r1 & ce_2x & ce)
@@ -207,6 +227,10 @@ module emu_system_top
             if (~POWER_GOOD) gbreset <= 1'b1;
         end
     end
+
+
+
+
     
     wire DMA_on;
     wire hdma_active;
@@ -216,7 +240,7 @@ module emu_system_top
        .pclk            (pclk           ),
        .ce              (ce             ),
        .ce_2x           (ce_2x          ),
-       .gbreset         (gbreset        ),
+       .gbreset         (gbreset        ), 
        .cpu_speed       (cpu_speed      ),
        .cpu_halt        (cpu_halt       ),
        .cpu_stop        (cpu_stop       ),
@@ -232,7 +256,8 @@ module emu_system_top
        .CART_A          (CART_A         ),
        .CART_CLK        (CART_CLK       ),
        .CART_CS         (CART_CS        ),
-       .CART_D          (CART_D         ),
+       .CART_D_IN       (CART_D_IN      ),
+       .CART_D_OUT      (CART_D_OUT     ),
        .CART_RD         (CART_RD        ),
        .CART_WR         (CART_WR        ),
        .CART_DATA_DIR_E (CART_DATA_DIR_E),
@@ -257,6 +282,10 @@ module emu_system_top
         sc_int_clock2_r1   <= sc_int_clock2;
         serial_data_out_r1 <= serial_data_out;
     end
+
+
+    // when sc_int_clock2_r1 == 1'b1 , output => A->B
+    assign LINK_CLK_DIR_LV = sc_int_clock2_r1; 
 
     assign LINK_CLK = sc_int_clock2_r1 ? serial_clk_out_r1 : 1'bZ;
     assign serial_clk_in = LINK_CLK_r1;
@@ -286,6 +315,8 @@ module emu_system_top
     wire [15:0] snd_l;  
     wire [15:0] snd_r;  
 
+
+
     gb u_gb(
         .reset(gbreset),
 
@@ -299,6 +330,7 @@ module emu_system_top
         .paletteBGIn(paletteBGIn),
         .paletteOBJ0In(paletteOBJ0In),
         .paletteOBJ1In(paletteOBJ1In),
+        .gbc_color_temp(gbc_color_temp),
 
         .paletteOff(paletteOff),
         .gbc_mode(gbc_mode),
@@ -402,6 +434,7 @@ module emu_system_top
 
         .rewind_on(1'd0),
         .rewind_active(1'd0)
+
     );
     
     audio_filter u_audio_filter

@@ -67,6 +67,9 @@
 `define UAC_INPUT_TERMINAL_MICROPHONE_ARRAY             16'h205
 `define UAC_INPUT_TERMINAL_PROC_MICROPHONE_ARRAY        16'h206
 
+/* External terminal types */
+`define UAC_TERMINAL_LINE_CONNECTOR                    16'h0603
+
 
 /* Formats - A.1.1 Audio Data Format Type I Codes */
 `define UAC_FORMAT_TYPE_I_UNDEFINED     32'h0

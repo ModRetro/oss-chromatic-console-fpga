@@ -1,3 +1,5 @@
+`timescale 1ns/1ps
+
 module ST7785_init #(parameter ISSIMU=0)
 (
     input       clk,
@@ -12,6 +14,9 @@ module ST7785_init #(parameter ISSIMU=0)
     parameter CLK_DIV_2N = 6;
 
     wire clk_out_ne;
+
+    wire sck;  
+
     clock_div #(
         .DIV_2N(CLK_DIV_2N)) 
     c1 (
@@ -22,7 +27,25 @@ module ST7785_init #(parameter ISSIMU=0)
     );
     
     reg       cs;
-    assign LCD_SCK = ~cs ? sck : 1'd0;
+
+///////////////////////////////////////////////////////////////////////// 
+// delay LCD_SCK by 3 clock cycles so that the the first rising 
+// edge follows deassertion of chip-select by ~60ns
+    reg sck_q;
+    reg sck_qq;
+    reg sck_qqq;
+    always @(posedge clk) begin 
+        sck_q   <= ~cs ? sck : 1'd0;
+        sck_qq  <= sck_q;
+        sck_qqq <= sck_qq;    
+    end
+
+    // ensure that the LCD_SCK serial clock signal is held low
+    // after the last bit is sent
+    assign LCD_SCK = sck_qqq & (bit_cnt != 0);
+
+// assign LCD_SCK = ~cs ? sck : 1'd0; // previous assignment
+///////////////////////////////////////////////////////////////////////////
 
     localparam DATA_MAX_CNT = 127;
     
@@ -118,6 +141,7 @@ module ST7785_init #(parameter ISSIMU=0)
                     else
                     begin
                         cs <= 1'd1;
+                        LCD_SDA_SDI <= 1'b0;   // fold data low at end of transaction
                     end
                 end
         end
@@ -150,8 +174,7 @@ module clock_div
         input clk_in,
         input reset,
         output reg clk_out = 'd0,
-        output reg clk_out_ne,
-        output reg clk_out_pe
+        output reg clk_out_ne
     );
 
     reg [SIZE - 1:0] counter = DIV_2N - 1;
@@ -179,3 +202,4 @@ module clock_div
         end
     end
 endmodule
+

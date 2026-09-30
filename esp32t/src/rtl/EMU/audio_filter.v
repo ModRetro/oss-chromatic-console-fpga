@@ -1,124 +1,88 @@
-
-module audio_filter
-(
-	input        reset,
-	input        clk,
-
-	input [15:0] core_l,
-	input [15:0] core_r,
-
-	output [15:0] filter_l,
-	output [15:0] filter_r
+// Stereo wrapper: hclk/2 low-pass -> hclk/16 biquad -> hclk/256 output.
+// Independent DSPs per channel. See docs/audio_dsp_analysis.py.
+module audio_filter (
+    input reset, input clk,
+    input [15:0] core_l, core_r,
+    output reg [15:0] filter_l, filter_r
 );
+    reg [1:0] reset_sync = 2'b11;
+    always @(posedge clk or posedge reset)
+        if (reset) reset_sync <= 2'b11;
+        else reset_sync <= {reset_sync[0],1'b0};
+    wire filter_reset = reset_sync[1];
+    reg [7:0] div;
+    always @(posedge clk or posedge filter_reset)
+        if (filter_reset) div <= 0;
+        else div <= div + 1'b1;
+    wire first_ce = !div[0];
+    wire biquad_ce = div[3:0] == 4'd1;
+    wire sample_ce = div == 8'd0;
 
-localparam CLK_RATE = 16777000; // hclk
+    // Preserve existing input acceptance, on the same hclk as the core.
+    reg [15:0] cl, cr, cl1, cl2, cr1, cr2;
+    always @(posedge clk or posedge filter_reset) begin
+        if (filter_reset) begin
+            cl<=0; cr<=0; cl1<=0; cl2<=0; cr1<=0; cr2<=0;
+        end else begin
+            cl1<=core_l; cl2<=cl1; if (cl2==cl1) cl<=cl2;
+            cr1<=core_r; cr2<=cr1; if (cr2==cr1) cr<=cr2;
+        end
+    end
+    wire signed [26:0] low_l, low_r, audio_l, audio_r;
+    audio_iir1_dsp lp_l (
+        .clk(clk),
+        .reset(filter_reset),
+        .ce(first_ce),
+        .din(cl),
+        .dout(low_l)
+    );
+    audio_iir1_dsp lp_r (
+        .clk(clk),
+        .reset(filter_reset),
+        .ce(first_ce),
+        .din(cr),
+        .dout(low_r)
+    );
+    audio_biquad_dsp bq_l (
+        .clk(clk),
+        .reset(filter_reset),
+        .ce(biquad_ce),
+        .din(low_l),
+        .dout(audio_l),
+        .valid()
+    );
+    audio_biquad_dsp bq_r (
+        .clk(clk),
+        .reset(filter_reset),
+        .ce(biquad_ce),
+        .din(low_r),
+        .dout(audio_r),
+        .valid()
+    );
 
-reg [31:0] flt_rate = 7056000;
-reg [39:0] cx  = 4258969;
-reg  [7:0] cx0 = 3;
-reg  [7:0] cx1 = 3;
-reg  [7:0] cx2 = 1;
-reg [23:0] cy0 = 24'hA123C9;
-reg [23:0] cy1 = 24'h5DBD9A;
-reg [23:0] cy2 = 24'hE11EA9;
-
-reg sample_ce;
-reg [7:0] div = 0;
-always @(posedge clk) begin
-	div <= div + 1'd1;
-	if(!div) begin
-		div <= 2'd1;
-	end
-
-	sample_ce <= !div;
-end
-
-reg flt_ce;
-reg [31:0] cnt = 0;
-always @(posedge clk) begin
-	flt_ce = 0;
-	cnt = cnt + {flt_rate[30:0],1'b0};
-	if(cnt >= CLK_RATE) begin
-		cnt = cnt - CLK_RATE;
-		flt_ce = 1;
-	end
-end
-
-reg [15:0] cl,cr;
-reg [15:0] cl1,cl2;
-reg [15:0] cr1,cr2;
-always @(posedge clk) begin
-	cl1 <= core_l; cl2 <= cl1;
-	if(cl2 == cl1) cl <= cl2;
-
-	cr1 <= core_r; cr2 <= cr1;
-	if(cr2 == cr1) cr <= cr2;
-end
-
-reg a_en1 = 0, a_en2 = 0;
-reg  [1:0] dly1 = 0;
-reg [14:0] dly2 = 0;
-always @(posedge clk, posedge reset) begin
-	if(reset) begin
-		dly1 <= 0;
-		dly2 <= 0;
-		a_en1 <= 0;
-		a_en2 <= 0;
-	end
-	else begin
-		if(flt_ce) begin
-			if(~&dly1) dly1 <= dly1 + 1'd1;
-			else a_en1 <= 1;
-		end
-
-		if(sample_ce) begin
-			if(!dly2[13]) dly2 <= dly2 + 1'd1;
-			else a_en2 <= 1;
-		end
-	end
-end
-
-wire [15:0] acl, acr;
-IIR_filter #(.use_params(0)) IIR_filter
-(
-	.clk(clk),
-	.reset(reset),
-
-	.ce(flt_ce & a_en1),
-	.sample_ce(sample_ce),
-
-	.cx(cx),
-	.cx0(cx0),
-	.cx1(cx1),
-	.cx2(cx2),
-	.cy0(cy0),
-	.cy1(cy1),
-	.cy2(cy2),
-
-	.input_l(cl),
-	.input_r(cr),
-	.output_l(acl),
-	.output_r(acr)
-);
-
-DC_blocker dcb_l
-(
-	.clk(clk),
-	.ce(sample_ce),
-	.sample_rate(0),
-	.mute(~a_en2),
-	.din(acl),
-	.dout(filter_l)
-);
-
-DC_blocker dcb_r
-(
-	.clk(clk),
-	.ce(sample_ce),
-	.sample_rate(0),
-	.mute(~a_en2),
-	.din(acr),
-	.dout(filter_r)
-);
-
+    function [15:0] pcm16;
+        input signed [26:0] value;
+        reg signed [17:0] rounded;
+        begin
+            rounded = $signed(value[26:10]) + $signed({17'd0,(value[9] && (!value[26] || (|value[8:0])))});
+            if (rounded > 18'sd32767) pcm16 = 16'h7fff;
+            else if (rounded < -18'sd32768) pcm16 = 16'h8000;
+            else pcm16 = rounded[15:0];
+        end
+    endfunction
+    // Keep the existing approximately 125 ms startup mute.
+    reg [12:0] mute_count;
+    reg unmuted;
+    always @(posedge clk or posedge filter_reset) begin
+        if (filter_reset) begin
+            mute_count<=0; unmuted<=0; filter_l<=0; filter_r<=0;
+        end else if (sample_ce) begin
+            if (!unmuted) begin
+                if (&mute_count) unmuted<=1;
+                else mute_count<=mute_count+1'b1;
+            end
+            filter_l <= unmuted ? pcm16(audio_l) : 16'd0;
+            filter_r <= unmuted ? pcm16(audio_r) : 16'd0;
+        end
+    end
 endmodule

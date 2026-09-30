@@ -1,10 +1,10 @@
 module ST7785_panel_master(
+    input               appear_off,
     input               gClk,
     input               nRST,
 
     input               hClk,
     input       [17:0]  hColorPixel,
-    input       [17:0]  hColorPixelUVC,
     input               lcd_on,
     input               hVsync,
     input               hHsync,
@@ -14,9 +14,7 @@ module ST7785_panel_master(
     output  reg         LCD_HSYNC,
     output  reg         LCD_VSYNC,
     output  reg         LCD_GENLOCK,
-    output  reg [5:0]   LCD_DB,
-    output  reg         LCD_ENABLE_UVC,
-    output  reg [17:0]  LCD_DB_UVC
+    output  reg [5:0]   LCD_DB
 );
     
     parameter       H_Lw             = 16'd30; 
@@ -67,12 +65,11 @@ module ST7785_panel_master(
         valid_r1 <= hValid;
         
 
-    wire [17:0] color_pixeluvc;
     wire [17:0] color_pixelp;
     
     localparam DEPTH = 1024;
-    reg [35:0] lineBuffer [DEPTH-1:0];
-    reg [35:0]  lineBuffer_q;
+    reg [17:0] lineBuffer [DEPTH-1:0];
+    reg [17:0]  lineBuffer_q;
 
     reg [9:0]   lineBuffer_wa;
     reg [7:0]   lineBuffer_wrCount;
@@ -108,7 +105,7 @@ module ST7785_panel_master(
 
     always@(posedge hClk)
         if(hValid&&(lineBuffer_wrCount <= 8'd159))
-            lineBuffer[lineBuffer_wa]  <=  {hColorPixelUVC, hColorPixel};
+            lineBuffer[lineBuffer_wa]  <=  hColorPixel;
 
     reg [1:0] phase;
     reg [7:0] hoffset;
@@ -166,7 +163,6 @@ module ST7785_panel_master(
     always@(posedge gClk)
         lineBuffer_q <= lineBuffer[lineBuffer_ra];
 
-    assign color_pixeluvc = lineBuffer_q[35:18];
     assign color_pixelp = lineBuffer_q[17:0];
 
     localparam FINE_OFFSET = 11'd418;
@@ -224,6 +220,7 @@ module ST7785_panel_master(
     reg LCD_DEI_r1;
     reg LCD_DEI_r2;
     reg LCD_VSYNC_r1;
+    localparam BLACK = 0;
     always@(posedge gClk)
     begin
         LCD_DEI_r1 <= LCD_DEI;
@@ -239,28 +236,28 @@ module ST7785_panel_master(
         begin
             if(LCD_EN)
             begin
+                // when the unit should appear off during an emulator core reset or
+                // when the FPGA is powered with switch off, want to keep LCD running
+                // like normal (to prevent weird effects) but look off.  Writing
+                // black pixels and turning backlight off seems to do the trick.  
+                // Could possibly do this in a higher level module, but don't
+                // want to get signals out of sync.
                 if(phase == 2)
-                    LCD_DB <= color_pixelp[17:12]; // Blue
+                    LCD_DB <= appear_off ? BLACK : color_pixelp[17:12]; // Blue
                 if(phase == 1)
-                    LCD_DB <= color_pixelp[11:6]; // Green
+                    LCD_DB <= appear_off ? BLACK : color_pixelp[11:6]; // Green
                 if(phase == 0)
-                    LCD_DB <= color_pixelp[5:0]; // Red
+                    LCD_DB <= appear_off ? BLACK : color_pixelp[5:0]; // Red
 
-                LCD_DB_UVC <= color_pixeluvc;
-                LCD_ENABLE_UVC <= LCD_DEI_r2;
             end
             else
             begin
                 LCD_DB          <= {6{1'b1}};
-                LCD_DB_UVC      <= {18{1'b1}};
-                LCD_ENABLE_UVC  <= LCD_DEI_r2;
             end
         end
         else
         begin
             LCD_DB <= 'd0;
-            LCD_DB_UVC <= 'd0;
-            LCD_ENABLE_UVC <= 1'd0;
         end
     end
 

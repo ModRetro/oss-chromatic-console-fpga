@@ -59,21 +59,21 @@
 
 /* USB Video resolution */
 `define BITS_PER_PIXEL  8'd16
-`define WIDTH           16'd160
-`define HEIGHT          16'd144
+`define WIDTH           16'd320
+`define HEIGHT          16'd288
 
 /* Frame rate */
 `define FPS  60
 `define FPS_MAX  60
-`define FPS_MIN  1
+`define FPS_MIN  60
 
 `define MAX_FRAME_SIZE (`WIDTH * `HEIGHT * `BITS_PER_PIXEL / 8)
 `define MIN_BIT_RATE   (`MAX_FRAME_SIZE * `FPS_MIN * 8)
 `define MAX_BIT_RATE   (`MAX_FRAME_SIZE * `FPS_MAX * 8)
-/* Only single packet per mframe supported */
-`define PACKET_PER_MFRAME   (1)
-/* usb code here does not handle additional packets, keep at 0 */
-`define ADDITIONAL_PACKET   (16'd0)
+/* Alt 1 reserves 1024 bytes, alt 2 reserves two 1024-byte transactions. */
+`define PACKET_PER_MFRAME   (2)
+/* Used only by the high-bandwidth alternate setting. */
+`define ADDITIONAL_PACKET   (16'd1)
 `define PACKET_SIZE    (12'd1024)
 `define PAYLOAD_SIZE   (`PACKET_PER_MFRAME * `PACKET_SIZE)
 `define DEVICE_CLOCK_FREQUENCY (32'd60000000)

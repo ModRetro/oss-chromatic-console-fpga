@@ -1,3 +1,56 @@
+## v18.13
+
+### Fixed
+- Fixed a source of corrupted frames in OBS on macOS.
+
+## v18.12
+
+### Fixed
+- Disable the charger watchdog so configured charging settings are not periodically reset.
+- Correct temperature-based charge-current selection on hardware with a temperature sensor.
+- Synchronize and latch hardware-revision detection before selecting the charging policy.
+- Handle I2C NACKs and transaction timeouts, and retry failed charger writes.
+
+## v18.11
+
+### Added
+- USB video streaming at 320x288 with 2x integer scaling, now the default. Native 160x144 streaming remains selectable in the capture application.
+
+### Changed
+- Reworked USB video capture, color conversion, and packetization to support both resolutions and recover from interrupted transfers.
+- Identify USB game audio as a line input instead of a microphone.
+- Reduced FPGA resource usage in the audio filters, USB serial FIFOs, and UART baud-rate calculation.
+- Removed unused legacy modules, obsolete signal connections, and a stale clock constraint; cleaned up associated synthesis warnings and build references.
+
+### Fixed
+- Added hardware-revision-aware cartridge power and level-shifter sequencing to prevent leakage-driven cartridge signals while the updated hardware is switched off, including with USB connected.
+- Hold the emulator in reset until cartridge startup sequencing completes.
+- Corrected audio filter behavior when building with the updated Gowin tools.
+- Improved menu-button synchronization and replaced a divided audio-system clock with a clock enable.
+
+## v18.10
+
+### Changed 
+ - logic to support modified power switch network
+ - modified USB charge functionality including temperature controlled charge current
+ - add second version detect pin
+ - add display id pin 
+ - eliminate LCD ghosting
+ - partial ESD mitigation
+ - support for alternative PSRAM chip
+
+## v18.9
+
+### Changed 
+ - added link-cable support for revised PCB
+ - used `VERSION_DET` pin state for PCB-aware battery voltage thresholds
+ - added bit to message payload sent to firmware for PCB-aware battery voltage estimate 
+ - removed HDMI signals 
+ - Additional `CART_RST` functionality.
+
+### Fixed 
+ - existing 3-wire interface for ST7785 LCD controller 
+
 ## v18.8
 
 ### Changed

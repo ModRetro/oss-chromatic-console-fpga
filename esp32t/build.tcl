@@ -1,51 +1,14 @@
-add_file -type verilog "src/fifo1k/fifo1k.v"
-add_file -type verilog "src/gowin_adc/gowin_adc.v"
-add_file -type verilog "src/rtl/BSP/ST7785_init.v"
-add_file -type verilog "src/rtl/BSP/ST7785_panel_master.v"
-add_file -type verilog "src/rtl/BSP/adc_wrap.v"
-add_file -type verilog "src/rtl/BSP/aud_system_top.v"
-add_file -type verilog "src/rtl/BSP/gb_burst_write.v"
-add_file -type verilog "src/rtl/BSP/i2c_master.sv"
-add_file -type verilog "src/rtl/BSP/mem_system_top.sv"
-add_file -type verilog "src/rtl/BSP/mm_burst_read_to_stream.v"
-add_file -type verilog "src/rtl/BSP/mm_burst_write.v"
-add_file -type verilog "src/rtl/BSP/mpmc.v"
-add_file -type verilog "src/rtl/BSP/polling_master.v"
-add_file -type verilog "src/rtl/BSP/qspi_slave.v"
-add_file -type verilog "src/rtl/BSP/system_monitor.v"
-add_file -type verilog "src/rtl/BSP/tlv320_init.v"
-add_file -type verilog "src/rtl/BSP/uart/fixed_point_divider/fixed_point_divider.v"
-add_file -type verilog "src/rtl/BSP/uart/uart.v"
-add_file -type verilog "src/rtl/BSP/uart/usb_uart_config.v"
-add_file -type verilog "src/rtl/BSP/vid_system_top.v"
-add_file -type verilog "src/rtl/BSP/vid_tpg.v"
-add_file -type verilog "src/rtl/EMU/CORE/cheatcodes.sv"
-add_file -type verilog "src/rtl/EMU/CORE/dpramV.v"
-add_file -type verilog "src/rtl/EMU/CORE/dpram_difV.v"
-add_file -type verilog "src/rtl/EMU/CORE/gb.v"
-add_file -type verilog "src/Gameboy_MiSTer/rtl/hdma.v"
-add_file -type verilog "src/rtl/EMU/CORE/link.v"
-add_file -type verilog "src/rtl/EMU/CORE/sprites.v"
-add_file -type verilog "src/Gameboy_MiSTer/rtl/timer.v"
-add_file -type verilog "src/rtl/EMU/CORE/video.v"
-add_file -type verilog "src/rtl/EMU/cart.v"
-add_file -type verilog "src/rtl/EMU/emu_system_top.v"
-add_file -type vhdl "src/rtl/BSP/MultiPortRamCtrl.vhd"
-add_file -type vhdl "src/rtl/BSP/PSRAMBIST_Burst.vhd"
-add_file -type vhdl "src/rtl/BSP/PSRAMController.vhd"
-add_file -type vhdl "src/rtl/BSP/uart/uart_rx.vhd"
-add_file -type vhdl "src/rtl/BSP/uart/uart_tx.vhd"
-add_file -type vhdl "src/rtl/EMU/CORE/T80/GBse.vhd"
-add_file -type vhdl "src/Gameboy_MiSTer/rtl/T80/T80.vhd"
-add_file -type vhdl "src/Gameboy_MiSTer/rtl/T80/T80_ALU.vhd"
-add_file -type vhdl "src/rtl/EMU/CORE/T80/T80_MCode.vhd"
-add_file -type vhdl "src/Gameboy_MiSTer/rtl/T80/T80_Pack.vhd"
-add_file -type vhdl "src/Gameboy_MiSTer/rtl/T80/T80_Reg.vhd"
-add_file -type vhdl "src/rtl/EMU/CORE/bus_savestates.vhd"
-add_file -type vhdl "src/Gameboy_MiSTer/rtl/gb_savestates.vhd"
-add_file -type vhdl "src/Gameboy_MiSTer/rtl/gb_statemanager.vhd"
-add_file -type vhdl "src/rtl/EMU/CORE/gbc_snd.vhd"
-add_file -type vhdl "src/Gameboy_MiSTer/rtl/reg_savestates.vhd"
-add_file -type vhdl "src/rtl/EMU/CORE/speedcontrol.vhd"
-add_file -type other "src/rtl/BSP/tlv320regs.hex"
-
+# Build the complete project from the maintained IDE source list.
+# Usage: gw_sh build.tcl (paths are relative to this script).
+cd [file dirname [info script]]
+set project_file [open evt1_x2.gprj r]
+set project_xml [read $project_file]
+close $project_file
+foreach {entry path type enabled} [regexp -all -inline {<File path="([^"]+)" type="file\.([^"]+)" enable="([01])"/>} $project_xml] {
+    if {$enabled eq "1"} { add_file -type $type $path }
+}
+set_device GW5A-EV25UG256CC1/I0 -device_version A
+# Read the maintained IDE settings on both platforms. Do not silently use the
+# CLI's different routing/clock-routing defaults.
+source build_options.tcl
+run all

@@ -2,17 +2,19 @@
 
 module vid_system_top #(parameter ISSIMU=0)
 (
+    input               appear_off,
     input               gClk,
     input               hClk,
     input               pClk,
     input               reset,
 
     input               BTN_MENU,
-    output reg          slideOutActive,
 
     output [5:0]        LCD_DB,
-    output              LCD_ENABLE_UVC,
-    output [17:0]       LCD_DB_UVC,
+    output              capture_valid,
+    output              capture_frame_start,
+    output              capture_line_end,
+    output [17:0]       capture_pixel,
     output              LCD_DOTCLK,
     output              LCD_ENABLE,
     output              LCD_HSYNC,
@@ -43,7 +45,6 @@ module vid_system_top #(parameter ISSIMU=0)
     output              hGBWrite,
     output  [15:0]      hGBData,
 
-    output              hValid,
     output              hHsync,
     output              hVsync,
     input [15:0]        hWrBurstQ,
@@ -405,7 +406,28 @@ module vid_system_top #(parameter ISSIMU=0)
     wire [17:0] hColorPixelUVC = overlayCrush ? {2'd0,hColorPixelUVCCorrected[17:14],2'd0,hColorPixelUVCCorrected[11:8],2'd0,hColorPixelUVCCorrected[5:2]} : 
                                  overlayActive ? overlayColor : hColorPixelUVCCorrected;
 
+    // The USB tap shares the corrected/overlaid source pixels with panel
+    // writes, but has its own line buffers and clock crossing. The emulator
+    // core and the LCD timing are unchanged.
+    reg capture_vsync_d;
+    reg [15:0] capture_hsync_delay;
+    always @(posedge hClk) begin
+        if (reset) begin
+            capture_vsync_d <= 0;
+            capture_hsync_delay <= 0;
+        end else begin
+            capture_vsync_d <= hVsyncCorrected;
+            capture_hsync_delay <= {capture_hsync_delay[14:0],hHsyncCorrected};
+        end
+    end
+    assign capture_frame_start = hVsyncCorrected && !capture_vsync_d;
+    // Match the panel writer's delayed mode-3 falling edge: the pixel output
+    // pipeline can still contain pixels when the PPU first leaves mode 3.
+    assign capture_line_end = capture_hsync_delay[15] && !capture_hsync_delay[14];
+    assign capture_valid = hValidCorrected && !reset;
+    assign capture_pixel = LCD_EN ? hColorPixelUVC : 18'h3ffff;
     ST7785_panel_master u_ST7785_panel_master(
+        .appear_off (appear_off),
         .gClk(gClk),
         .nRST(LCD_INIT_DONE),
         .hClk(hClk),
@@ -413,7 +435,7 @@ module vid_system_top #(parameter ISSIMU=0)
         .hHsync(hHsyncCorrected),
         .hVsync(hVsyncCorrected),
         .hColorPixel(hColorPixelLCD),
-        .hColorPixelUVC(hColorPixelUVC),
+
 
         .lcd_on(gb_lcd_on),
         .LCD_EN(LCD_EN),
@@ -421,9 +443,7 @@ module vid_system_top #(parameter ISSIMU=0)
         .LCD_HSYNC(LCD_HSYNC),
         .LCD_VSYNC(LCD_VSYNC),
         .LCD_GENLOCK(LCD_GENLOCK),
-        .LCD_DB(LCD_DB),
-        .LCD_ENABLE_UVC(LCD_ENABLE_UVC),
-        .LCD_DB_UVC(LCD_DB_UVC)
+        .LCD_DB(LCD_DB)
     );
 
 endmodule

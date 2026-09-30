@@ -15,7 +15,9 @@ git submodule update --init --recursive
 
 ### Gowin Development Environment
 
-**The Gowin FPGA Designer v1.9.9.03 must be used.** Using Gowin IDE v1.9.10.X or newer is currently not supported by this build.
+The current design has been built and tested with **Gowin FPGA Designer v1.9.12.03**.
+Earlier releases used v1.9.9.03; other tool versions have not been validated for
+the current streaming changes.
 
 You will also need to apply for a local license with Gowin through their website:
 https://www.gowinsemi.com/en/support/license
@@ -26,6 +28,13 @@ You will receive an email within a few minutes with a `.lic` file attached. Run 
 
 ## Building
 Once in the IDE, load `evt1_x2.gprj` project and click on the green recycle-like button icon to run synthesis and PnR. This will take about 5-10 minutes to complete.
+
+For a command-line build, run `gw_sh build.tcl` from `esp32t` using the Gowin
+installation's `IDE/bin/gw_sh` executable.
+
+On Windows, `esp32t/build_evt1_x2.bat` wraps the same Tcl build and copies only
+`evt1_x2.fs` and `evt1_x2.bin` into `esp32t/build`. Set `GOWIN_SH` to override
+the wrapper's default Gowin 1.9.12.03 executable path.
 
 ## Flashing
 Flashing can be performed using the official [Gowin Programmer](https://www.gowinsemi.com/en/) software or the [`openFPGALoader`](https://github.com/trabucayre/openFPGALoader) utility through the Chromatic's USB interface. The Gowin Programmer requires the installation of the GWU2X device driver.

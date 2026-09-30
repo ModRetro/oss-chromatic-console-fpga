@@ -437,7 +437,7 @@ begin
       Q3  => rwds_in_Q(3)
    );
    
-   ready <= '1' when (state = IDLE and cfg_1_VendorID = 5x"0D") else '0';
+   ready <= '1' when (state = IDLE and (cfg_1_VendorID = 5x"0D" or cfg_1_VendorID = 5x"0C")) else '0';
    
    writeNext <= '1' when (state = WRITING and writeburst = '1' and burst_count > 2) else '0';
    

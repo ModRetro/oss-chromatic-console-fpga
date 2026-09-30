@@ -30,7 +30,7 @@
 `define     EP15_IN_BUF_ASIZE    4'd12
 `define     EP1_OUT_BUF_ASIZE    4'd12
 `define     EP2_OUT_BUF_ASIZE    4'd12
-`define     EP3_OUT_BUF_ASIZE    4'd12
+`define     EP3_OUT_BUF_ASIZE    4'd11
 `define     EP4_OUT_BUF_ASIZE    4'd12
 `define     EP5_OUT_BUF_ASIZE    4'd12
 `define     EP6_OUT_BUF_ASIZE    4'd12
@@ -45,7 +45,8 @@
 `define     EP15_OUT_BUF_ASIZE   4'd12
 `define     EP1_OUT_BUF_AFULL    13'd2048
 `define     EP2_OUT_BUF_AFULL    13'd2048
-`define     EP3_OUT_BUF_AFULL    13'd2048
+// Stop accepting packets at 1 KiB, reserving 1 KiB in the 2 KiB RX buffer.
+`define     EP3_OUT_BUF_AFULL    13'd1024
 `define     EP4_OUT_BUF_AFULL    13'd2048
 `define     EP5_OUT_BUF_AFULL    13'd2048
 `define     EP6_OUT_BUF_AFULL    13'd2048
@@ -58,7 +59,11 @@
 `define     EP13_OUT_BUF_AFULL   13'd2048
 `define     EP14_OUT_BUF_AFULL   13'd2048
 `define     EP15_OUT_BUF_AFULL   13'd2048
-module usb_fifo
+module usb_fifo #(
+    // Bit N selects single-clock staging for endpoint N. Enable only when
+    // both endpoint clocks are wired to i_clk; other endpoints remain async.
+    parameter [15:0] SINGLE_CLOCK_ENDPOINTS = 16'h0000
+)
 (
      input              i_clk         //clock
     ,input              i_reset       //reset
@@ -591,6 +596,7 @@ end
 `ifdef EP1_IN_EN
     usb_tx_buf #(
          .P_ENDPOINT (1               )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[1])
         ,.P_DSIZE    (8               )
         ,.P_ASIZE    (`EP1_IN_BUF_ASIZE)
     )usb_tx_buf_ep1
@@ -612,6 +618,7 @@ end
 `ifdef EP1_OUT_EN
     usb_rx_buf #(
          .P_ENDPOINT (1  )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[1])
         ,.P_AFULL    (`EP1_OUT_BUF_AFULL)
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (`EP1_OUT_BUF_ASIZE)
@@ -634,6 +641,7 @@ end
 `ifdef EP2_IN_EN
     usb_tx_buf #(
          .P_ENDPOINT (2  )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[2])
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (`EP2_IN_BUF_ASIZE)
     )usb_tx_buf_ep2
@@ -655,6 +663,7 @@ end
 `ifdef EP2_OUT_EN
     usb_rx_buf #(
          .P_ENDPOINT (2  )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[2])
         ,.P_AFULL    (`EP2_OUT_BUF_AFULL)
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (`EP2_OUT_BUF_ASIZE)
@@ -678,6 +687,7 @@ end
 `ifdef EP3_IN_EN
     usb_tx_buf #(
          .P_ENDPOINT (3  )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[3])
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (`EP3_IN_BUF_ASIZE)
     )usb_tx_buf_ep3
@@ -699,6 +709,7 @@ end
 `ifdef EP3_OUT_EN
     usb_rx_buf #(
          .P_ENDPOINT (3  )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[3])
         ,.P_AFULL    (`EP3_OUT_BUF_AFULL)
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (`EP3_OUT_BUF_ASIZE)
@@ -722,6 +733,7 @@ end
 `ifdef EP4_IN_EN
     usb_tx_buf #(
          .P_ENDPOINT (4  )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[4])
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (`EP4_IN_BUF_ASIZE)
     )usb_tx_buf_ep4
@@ -743,6 +755,7 @@ end
 `ifdef EP4_OUT_EN
     usb_rx_buf #(
          .P_ENDPOINT (4  )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[4])
         ,.P_AFULL    (`EP4_OUT_BUF_AFULL)
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (`EP4_OUT_BUF_ASIZE)
@@ -766,6 +779,7 @@ end
 `ifdef EP5_IN_EN
     usb_tx_buf #(
          .P_ENDPOINT (5  )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[5])
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (`EP5_IN_BUF_ASIZE)
     )usb_tx_buf_ep5
@@ -787,6 +801,7 @@ end
 `ifdef EP5_OUT_EN
     usb_rx_buf #(
          .P_ENDPOINT (5  )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[5])
         ,.P_AFULL    (`EP5_OUT_BUF_AFULL)
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (`EP5_OUT_BUF_ASIZE)
@@ -809,6 +824,7 @@ end
 `ifdef EP6_IN_EN
     usb_tx_buf #(
          .P_ENDPOINT (6  )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[6])
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (`EP6_IN_BUF_ASIZE)
     )usb_tx_buf_ep6
@@ -830,6 +846,7 @@ end
 `ifdef EP6_OUT_EN
     usb_rx_buf #(
          .P_ENDPOINT (6  )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[6])
         ,.P_AFULL    (`EP6_OUT_BUF_AFULL)
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (`EP6_OUT_BUF_ASIZE)
@@ -852,6 +869,7 @@ end
 `ifdef EP7_IN_EN
     usb_tx_buf #(
          .P_ENDPOINT (7  )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[7])
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (`EP7_IN_BUF_ASIZE)
     )usb_tx_buf_ep7
@@ -873,6 +891,7 @@ end
 `ifdef EP7_OUT_EN
     usb_rx_buf #(
          .P_ENDPOINT (7  )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[7])
         ,.P_AFULL    (`EP7_OUT_BUF_AFULL)
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (`EP7_OUT_BUF_ASIZE)
@@ -895,6 +914,7 @@ end
 `ifdef EP8_IN_EN
     usb_tx_buf #(
          .P_ENDPOINT (8  )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[8])
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (`EP8_IN_BUF_ASIZE)
     )usb_tx_buf_ep8
@@ -916,6 +936,7 @@ end
 `ifdef EP8_OUT_EN
     usb_rx_buf #(
          .P_ENDPOINT (8  )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[8])
         ,.P_AFULL    (`EP8_OUT_BUF_AFULL)
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (`EP8_OUT_BUF_ASIZE)
@@ -938,6 +959,7 @@ end
 `ifdef EP9_IN_EN
     usb_tx_buf #(
          .P_ENDPOINT (9  )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[9])
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (`EP9_IN_BUF_ASIZE)
     )usb_tx_buf_ep9
@@ -959,6 +981,7 @@ end
 `ifdef EP9_OUT_EN
     usb_rx_buf #(
          .P_ENDPOINT (9  )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[9])
         ,.P_AFULL    (`EP9_OUT_BUF_AFULL)
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (`EP9_OUT_BUF_ASIZE)
@@ -981,6 +1004,7 @@ end
 `ifdef EP10_IN_EN
     usb_tx_buf #(
          .P_ENDPOINT (10 )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[10])
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (`EP10_IN_BUF_ASIZE)
     )usb_tx_buf_ep10
@@ -1002,6 +1026,7 @@ end
 `ifdef EP10_OUT_EN
     usb_rx_buf #(
          .P_ENDPOINT (10  )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[10])
         ,.P_AFULL    (`EP10_OUT_BUF_AFULL)
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (`EP10_OUT_BUF_ASIZE)
@@ -1024,6 +1049,7 @@ end
 `ifdef EP11_IN_EN
     usb_tx_buf #(
          .P_ENDPOINT (11 )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[11])
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (`EP11_IN_BUF_ASIZE)
     )usb_tx_buf_ep11
@@ -1045,6 +1071,7 @@ end
 `ifdef EP11_OUT_EN
     usb_rx_buf #(
          .P_ENDPOINT (11 )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[11])
         ,.P_AFULL    (`EP11_OUT_BUF_AFULL)
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (`EP11_OUT_BUF_ASIZE)
@@ -1067,6 +1094,7 @@ end
 `ifdef EP12_IN_EN
     usb_tx_buf #(
          .P_ENDPOINT (12 )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[12])
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (10 )
         ,.P_ASIZE    (`EP12_IN_BUF_ASIZE)
@@ -1089,6 +1117,7 @@ end
 `ifdef EP12_OUT_EN
     usb_rx_buf #(
          .P_ENDPOINT (12 )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[12])
         ,.P_AFULL    (`EP12_OUT_BUF_AFULL)
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (`EP12_OUT_BUF_ASIZE)
@@ -1111,6 +1140,7 @@ end
 `ifdef EP13_IN_EN
     usb_tx_buf #(
          .P_ENDPOINT (13 )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[13])
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (`EP13_IN_BUF_ASIZE)
     )usb_tx_buf_ep13
@@ -1132,6 +1162,7 @@ end
 `ifdef EP13_OUT_EN
     usb_rx_buf #(
          .P_ENDPOINT (13 )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[13])
         ,.P_AFULL    (`EP13_OUT_BUF_AFULL)
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (`EP13_OUT_BUF_ASIZE)
@@ -1154,6 +1185,7 @@ end
 `ifdef EP14_IN_EN
     usb_tx_buf #(
          .P_ENDPOINT (14 )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[14])
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (`EP14_IN_BUF_ASIZE)
     )usb_tx_buf_ep14
@@ -1175,6 +1207,7 @@ end
 `ifdef EP14_OUT_EN
     usb_rx_buf #(
          .P_ENDPOINT (14 )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[14])
         ,.P_AFULL    (EP14_OUT_BUF_AFULL)
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (EP14_OUT_BUF_ASIZE)
@@ -1197,6 +1230,7 @@ end
 `ifdef EP15_IN_EN
     usb_tx_buf #(
          .P_ENDPOINT (15 )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[15])
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (`EP15_IN_BUF_ASIZE)
     )usb_tx_buf_ep15
@@ -1218,6 +1252,7 @@ end
 `ifdef EP15_OUT_EN
     usb_rx_buf #(
          .P_ENDPOINT (15 )
+        ,.P_SINGLE_CLOCK (SINGLE_CLOCK_ENDPOINTS[15])
         ,.P_AFULL    (EP15_OUT_BUF_AFULL)
         ,.P_DSIZE    (8  )
         ,.P_ASIZE    (EP15_OUT_BUF_ASIZE)
@@ -1249,6 +1284,7 @@ endmodule
 
 
 module usb_tx_buf #(
+    parameter P_SINGLE_CLOCK = 0,
     parameter P_ENDPOINT = 1,
     parameter P_DSIZE    = 8,
     parameter P_ASIZE    = 9
@@ -1279,11 +1315,18 @@ module usb_tx_buf #(
     wire [P_ASIZE  :0] pkt_fifo_wr_num;
     reg  [P_ASIZE  :0] pkt_fifo_wr_num_d0;
     wire               pkt_fifo_empty;
+    generate if (P_SINGLE_CLOCK) begin : g_single_clock
+        // Endpoint and packet FIFO share i_clk. Write each received UART byte
+        // directly; retain packet storage and USB retry/commit behavior.
+        assign pkt_fifo_wr = i_ep_tx_dval;
+        assign pkt_fifo_wr_data = i_ep_tx_data;
+    end else begin : g_cross_clock
     wire               c_fifo_wr;
     wire [P_DSIZE-1:0] c_fifo_wr_data;
     reg                c_fifo_rd;
     reg                c_fifo_rd_dval;
     wire [P_DSIZE-1:0] c_fifo_rd_data;
+    wire c_fifo_empty;
     assign c_fifo_wr      = i_ep_tx_dval;
     assign c_fifo_wr_data = i_ep_tx_data;
     clk_cross_fifo #(
@@ -1306,9 +1349,6 @@ module usb_tx_buf #(
         ,.AlmostEmpty()
         ,.Empty      (c_fifo_empty  )
     );
-
-
-
     always@(posedge i_clk, posedge i_reset) begin
         if (i_reset) begin
             c_fifo_rd <= 1'b0;
@@ -1331,10 +1371,12 @@ module usb_tx_buf #(
         end
     end
 
-//==============================================================
-//======usb packet crc check fifo
 assign pkt_fifo_wr        = c_fifo_rd_dval;
 assign pkt_fifo_wr_data   = c_fifo_rd_data;
+    end endgenerate
+
+//==============================================================
+//======usb packet crc check fifo
 assign pkt_fifo_rd_pktfin = i_usb_txpktfin&(i_usb_endpt==P_ENDPOINT);
 assign pkt_fifo_rd_act    = i_usb_txact&(i_usb_endpt==P_ENDPOINT);
 assign pkt_fifo_rd        = i_usb_txpop&(i_usb_endpt==P_ENDPOINT);
@@ -1372,6 +1414,7 @@ endmodule
 
 
 module usb_rx_buf #(
+    parameter P_SINGLE_CLOCK = 0,
     parameter P_ENDPOINT = 1,
     parameter P_AFULL    = 400,
     parameter P_DSIZE    = 8,
@@ -1405,6 +1448,7 @@ module usb_rx_buf #(
     reg                c_fifo_rd;
     reg                c_fifo_dval;
     wire [P_DSIZE-1:0] c_fifo_rd_data;
+    wire c_fifo_empty;
 
 //==============================================================
 //======usb rx
@@ -1466,6 +1510,25 @@ module usb_rx_buf #(
 //======cross fifo
 assign c_fifo_wr      = pkt_fifo_rd_dval;
 assign c_fifo_wr_data = pkt_fifo_rd_data;
+    generate if (P_SINGLE_CLOCK) begin : g_single_clock
+        // Leave four slots for packet-read pipeline latency after almost-full.
+        // Registered output still holds the next byte while the UART is busy.
+        usb_sync_fifo #(
+            .DSIZE(P_DSIZE),
+            .ASIZE(3),
+            .AFULL(4)
+        ) staging_fifo (
+            .clk(i_clk),
+            .reset(i_reset),
+            .wr_en(c_fifo_wr),
+            .data(c_fifo_wr_data),
+            .rd_en(c_fifo_rd & i_ep_rx_rdy),
+            .q(c_fifo_rd_data),
+            .empty(c_fifo_empty),
+            .full(),
+            .almost_full(c_fifo_afull)
+        );
+    end else begin : g_cross_clock
     clk_cross_fifo #(
        .DSIZE (8  )
       ,.ASIZE (6  )
@@ -1486,6 +1549,7 @@ assign c_fifo_wr_data = pkt_fifo_rd_data;
         ,.AlmostEmpty()
         ,.Empty      (c_fifo_empty  )
     );
+    end endgenerate
     //dual_fifo_top dual_fifo_top(
     //    .WrClk      (i_clk          ), //input WrClk
     //    .WrReset    (i_reset        ), //input WrReset
@@ -1700,4 +1764,57 @@ module clk_cross_fifo (
         end
       endfunction
 
+endmodule
+
+// Single-clock endpoint staging. Registered read data holds between accepted
+// reads, including while the UART is busy. Defaults match the crossing FIFO;
+// RX overrides capacity/threshold to retain headroom with smaller storage.
+module usb_sync_fifo #(
+    parameter DSIZE = 8,
+    parameter ASIZE = 6,
+    parameter AFULL = 32
+)(
+    input clk,
+    input reset,
+    input wr_en,
+    input [DSIZE-1:0] data,
+    input rd_en,
+    output reg [DSIZE-1:0] q,
+    output empty,
+    output full,
+    output almost_full
+);
+    localparam [ASIZE:0] DEPTH = (1 << ASIZE);
+    reg [DSIZE-1:0] mem [0:(1 << ASIZE)-1];
+    reg [ASIZE-1:0] wr_ptr, rd_ptr;
+    reg [ASIZE:0] count;
+    wire push = wr_en && !full;
+    wire pop = rd_en && !empty;
+    assign empty = (count == 0);
+    assign full = (count == DEPTH);
+    assign almost_full = (count >= AFULL);
+
+    // Do not reset storage: validity is established by the pointers/count.
+    always @(posedge clk) begin
+        if (!reset && push) mem[wr_ptr] <= data;
+    end
+    always @(posedge clk or posedge reset) begin
+        if (reset) begin
+            wr_ptr <= 0;
+            rd_ptr <= 0;
+            count <= 0;
+            q <= 0;
+        end else begin
+            if (push) wr_ptr <= wr_ptr + 1'b1;
+            if (pop) begin
+                q <= mem[rd_ptr];
+                rd_ptr <= rd_ptr + 1'b1;
+            end
+            case ({push, pop})
+                2'b10: count <= count + 1'b1;
+                2'b01: count <= count - 1'b1;
+                default: count <= count;
+            endcase
+        end
+    end
 endmodule
