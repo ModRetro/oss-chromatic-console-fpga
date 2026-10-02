@@ -1,4 +1,9 @@
 // system_monitor.v
+package fpga_fw_version;
+    parameter bit       DEBUG = 1'd0;
+    parameter bit [5:0] MINOR = 6'd13;
+    parameter bit [5:0] MAJOR = 6'd18;
+endpackage
 
 module system_monitor(
     input               appear_off,
@@ -481,10 +486,10 @@ module system_monitor(
 
 
     reg [13:0] version = {
-        1'd0,  // 1 bit reserved
-        1'd0,  // 1 bit debug,
-        6'd13, // 6 bits minor version
-        6'd18  // 6 bits major version
+        1'd0,  // 1 bit reserved,
+        1'(fpga_fw_version::DEBUG),
+        6'(fpga_fw_version::MINOR),
+        6'(fpga_fw_version::MAJOR)
     };
 
 
