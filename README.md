@@ -83,4 +83,5 @@ Please submit all issues and bug reports through our [Contact Form](https://modr
 - [MiSTer](https://github.com/MiSTer-devel/Gameboy_MiSTer)
 
 ## Special Thanks
-- [rayjt9] For their palette improvements to the BootROM.
+- \[rayjt9\] For their palette improvements to the BootROM.
+- \[npisor\] For color warmth control settings.
