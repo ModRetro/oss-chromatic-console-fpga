@@ -57,6 +57,10 @@ module system_monitor(
     localparam [1:0] PALETTE_HOTKEY_EVENT_UP   = 2'd1;
     localparam [1:0] PALETTE_HOTKEY_EVENT_DOWN = 2'd2;
 
+    localparam NUM_CH = 10;
+    wire [$clog2(NUM_CH)-1:0] tx_channel;
+    wire write_done;
+
     wire    [6:0]   rx_address;
     wire    [79:0]  rx_data;
     wire            rx_data_val;
@@ -106,6 +110,30 @@ module system_monitor(
 
     reg [13:0] volt;
     wire       bat_is_LI;
+
+    // Raw ADC thresholds, selected by VERSION_DET (1=original, 0=V2).
+    // Original warning values retain pre-v18.9 behavior. V2 values use
+    // the MCU voltage conversion to match the same battery-bar levels.
+    // Red LED and low-battery icon: approximately 20% AA / 17% LiPo.
+    localparam [13:0] LOW_BATTERY_AA_ADC   = 14'd1071;
+    localparam [13:0] LOW_BATTERY_LIPO_ADC = 14'd1182;
+    localparam [13:0] LOW_BATTERY_AA_ADC_V2      = 14'd1118;
+    localparam [13:0] LOW_BATTERY_LIPO_ADC_V2    = 14'd1238;
+
+    // AA power-save entry and recovery; V2 matches the original meter levels.
+    // Separate recovery threshold prevents toggling near the entry threshold.
+    localparam [13:0] POWER_SAVE_ENTER_ADC = 14'd979;
+    localparam [13:0] POWER_SAVE_EXIT_ADC  = 14'd1293;
+    localparam [13:0] POWER_SAVE_ENTER_ADC_V2    = 14'd1019;
+    localparam [13:0] POWER_SAVE_EXIT_ADC_V2     = 14'd1357;
+
+    wire [13:0] low_battery_threshold = VERSION_DET
+        ? (bat_is_LI ? LOW_BATTERY_LIPO_ADC : LOW_BATTERY_AA_ADC)
+        : (bat_is_LI ? LOW_BATTERY_LIPO_ADC_V2 : LOW_BATTERY_AA_ADC_V2);
+    wire [13:0] power_save_enter_threshold = VERSION_DET
+        ? POWER_SAVE_ENTER_ADC : POWER_SAVE_ENTER_ADC_V2;
+    wire [13:0] power_save_exit_threshold = VERSION_DET
+        ? POWER_SAVE_EXIT_ADC : POWER_SAVE_EXIT_ADC_V2;
 
     always@(posedge clk or posedge reset)
     begin
@@ -216,13 +244,13 @@ module system_monitor(
             end
 
             if (volt >= 700) begin // ~1.8V
-               if (~lowpowerBacklight && ~bat_is_LI && volt < 979) begin // below 2.55 V
+               if (~lowpowerBacklight && ~bat_is_LI && volt < power_save_enter_threshold) begin
                   request_SystemStatusExtended <= 1'b1;
                   lowpowerBacklight            <= 1'b1;
                   lowerpowerOldBL              <= brightness;
                end
 
-               if (lowpowerBacklight && ~bat_is_LI && volt > 1293) begin // above 3.4 V
+               if (lowpowerBacklight && ~bat_is_LI && volt > power_save_exit_threshold) begin
                   request_SystemStatusExtended <= 1'b1;
                   lowpowerBacklight            <= 1'b0;
                   brightness                   <= lowerpowerOldBL;
@@ -346,40 +374,8 @@ module system_monitor(
    reg [8:0]  volt_cnt;
    reg        transmitVolt;
 
-   // ==============================================================
-   // BATTERY VOLTAGE CALCULATIONS
-   //
-   // ADC_LEVEL = VBAT * (R2 / (R1+R2)) * 2048 
-   //
-   // where R1,R2 form voltage divider with R1 connected to VBAT and R2 to GND.
-   //
-   // R1 and R2 differ between different PCB versions, determined by 
-   // VERSION_DET
-   // 
-   // The following ADC levels are derived by ratio scaling old thresholds
-   // to get a voltage and using the "ADC_LEVEL" shown above
-   // ==============================================================
-//   Previous thresolds
-//   wire [13:0] VOLTAGE_FULL   = bat_is_LI ? 14'd1423 : 14'd1367; //  3.75V LI : 3.6V AA
-//   wire [13:0] VOLTAGE_CRIT   = bat_is_LI ? 14'd1145 : 14'd997;  //  3.0V  LI : 2.6V AA
-//   wire [13:0] VOLTAGE_RED    = bat_is_LI ? 14'd1182 : 14'd1071; //  3.1V  LI : 2.8V AA
-
-   wire [13:0] VOLTAGE_FULL_V0   = bat_is_LI ? 14'd1509 : 14'd1616; //  4.2V LI : 4.5V AA
-   wire [13:0] VOLTAGE_CRIT_V0   = bat_is_LI ? 14'd1185 : 14'd1149; //  3.3V LI : 3.2V AA
-   wire [13:0] VOLTAGE_RED_V0    = bat_is_LI ? 14'd1221 : 14'd1257; //  3.4V LI : 3.5V AA
-   wire [13:0] VOLTAGE_1V8_V0    = 14'd646;
-
-   wire [13:0] VOLTAGE_FULL_V1   = bat_is_LI ? 14'd1551 : 14'd1661; //  4.2V LI : 4.5V AA
-   wire [13:0] VOLTAGE_CRIT_V1   = bat_is_LI ? 14'd1218 : 14'd1181; //  3.3V LI : 3.2V AA
-   wire [13:0] VOLTAGE_RED_V1    = bat_is_LI ? 14'd1255 : 14'd1292; //  3.4V LI : 3.5V AA
-   wire [13:0] VOLTAGE_1V8_V1    = 14'd700;  // should be 14'd664 through calculation, adding some bias
-
-   wire [13:0] VOLTAGE_FULL      = VERSION_DET ? VOLTAGE_FULL_V1 : VOLTAGE_FULL_V0; 
-   wire [13:0] VOLTAGE_CRIT      = VERSION_DET ? VOLTAGE_CRIT_V1 : VOLTAGE_CRIT_V0; 
-   wire [13:0] VOLTAGE_RED       = VERSION_DET ? VOLTAGE_RED_V1  : VOLTAGE_RED_V0;     
-   wire [13:0] VOLTAGE_1V8       = VERSION_DET ? VOLTAGE_1V8_V1  : VOLTAGE_1V8_V0;      
-
-
+   // Existing board-specific validity gate for battery LED/icon decisions.
+   wire [13:0] VOLTAGE_1V8 = VERSION_DET ? 14'd700 : 14'd646;
    reg blink;
 
    always@(posedge clk or posedge reset) begin
@@ -442,15 +438,20 @@ module system_monitor(
         if (volt >= VOLTAGE_1V8) begin
 //         if (volt >= 700) begin // ~1.8V
 
-            if (pmic_sys_status[2]) begin // charging
+            if (pmic_sys_status[2]) begin // BQ24296M REG08 PG_STAT: input power good
 
-               if(bat_is_LI && volt < VOLTAGE_FULL) begin
+               // REG08 CHRG_STAT[1:0]: 01=precharge, 10=fast charge,
+               // 00=not charging, 11=charge complete. Do not infer charge
+               // completion from the battery ADC; it can cross a voltage
+               // threshold repeatedly near full charge.
+               if (bat_is_LI && ((pmic_sys_status[5:4] == 2'b01) ||
+                                 (pmic_sys_status[5:4] == 2'b10))) begin
                   LED_White   <= 1'd1;
                end
 
             end else begin
 
-               if(volt < VOLTAGE_RED) begin
+               if(volt < low_battery_threshold) begin
                   low_battery <= 1'd1;
                   if (blink) LED_Red <= 1'd1;
                end
@@ -483,13 +484,10 @@ module system_monitor(
     reg [13:0] version = {
         1'd0,  // 1 bit reserved
         1'd0,  // 1 bit debug,
-        6'd13, // 6 bits minor version
+        6'd14, // 6 bits minor version
         6'd18  // 6 bits major version
     };
 
-
-    localparam  NUM_CH = 10;
-    wire [$clog2(NUM_CH)-1:0] tx_channel;
 
     wire [NUM_CH-1:0] channelsNewDataValid =
     {

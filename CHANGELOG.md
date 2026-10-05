@@ -1,3 +1,10 @@
+## v18.14
+
+### Fixed
+
+- Restore low-battery LED and icon behavior and align power-save thresholds across hardware versions.
+- Correct the white charging indicator near full charge.
+
 ## v18.13
 
 ### Fixed
